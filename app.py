@@ -88,7 +88,7 @@ class DixonColesModel:
         
         attack, defense, rho, home_adv = unpack(result.x)
         self.params = {t: {"attack": attack[i], "defense": defense[i]} for i, t in enumerate(self.teams)}
-        self.rho, self.home_advantage = rho, home_adv
+        self.rho, self.home_advantage = home_adv
         return self
 
     def get_lambdas(self, home_team, away_team):
@@ -170,8 +170,36 @@ def train_all_models(df):
     return {"goals": goal_model, "shots": shot_model, "sot": sot_model}
 
 # ==========================================
-# 4. INTERFACE STREAMLIT
+# 4. INTERFACE STREAMLIT & FILTRES
 # ==========================================
+# --- NOUVEAU : Barre latérale pour la stratégie ---
+st.sidebar.header("🎯 Stratégie de Paris")
+st.sidebar.markdown("Sélectionnez la tranche de cotes à cibler selon votre volume hebdomadaire.")
+
+strategie = st.sidebar.selectbox(
+    "Filtre de cotes",
+    [
+        "Afficher Tout (Aucun filtre)",
+        "Volume Faible (Cotes 1.50 - 1.85)",
+        "Volume Moyen (Cotes 1.70 - 2.10)",
+        "Volume Élevé (Cotes 1.85 - 2.30)",
+        "Volume Massif (Cotes > 2.00)"
+    ]
+)
+
+# Attribution des bornes selon la stratégie choisie
+if strategie == "Volume Faible (Cotes 1.50 - 1.85)":
+    cote_min, cote_max = 1.50, 1.85
+elif strategie == "Volume Moyen (Cotes 1.70 - 2.10)":
+    cote_min, cote_max = 1.70, 2.10
+elif strategie == "Volume Élevé (Cotes 1.85 - 2.30)":
+    cote_min, cote_max = 1.85, 2.30
+elif strategie == "Volume Massif (Cotes > 2.00)":
+    cote_min, cote_max = 2.00, 100.00 # 100 englobe les très hautes cotes
+else:
+    cote_min, cote_max = 1.01, 100.00 # Affiche tout par défaut
+
+
 st.title("🏆 Scanner de Value Bets Pro (Buts & Tirs)")
 
 league_key = st.selectbox("1️⃣ Choisis un championnat", options=list(LEAGUES.keys()), format_func=lambda x: LEAGUES[x]["country"])
@@ -197,7 +225,7 @@ st.divider()
 st.subheader("2️⃣ Saisissez les cotes du bookmaker")
 
 # Expander 1 : Marchés principaux
-with st.expander("⚽ MARCHÉS DES BUTS PRINCUPAUX (1X2, O/U 2.5, BTTS)", expanded=True):
+with st.expander("⚽ MARCHÉS DES BUTS PRINCIPAUX (1X2, O/U 2.5, BTTS)", expanded=True):
     c1, c2, c3 = st.columns(3)
     h_odd = c1.number_input("Cote 1", value=2.00, step=0.01)
     d_odd = c2.number_input("Cote X", value=3.40, step=0.01)
@@ -225,7 +253,7 @@ with st.expander("🥅 BUTS PAR ÉQUIPE (Over / Under 0.5 et 1.5)"):
     ag_o15 = c3.number_input("Over 1.5 (Ext)", value=3.50, step=0.01)
     ag_u15 = c4.number_input("Under 1.5 (Ext)", value=1.28, step=0.01)
 
-# Expander 3 : Tirs et tirs cadrés (Avec Ajout des Tirs Individuels)
+# Expander 3 : Tirs et tirs cadrés
 with st.expander("📊 MARCHÉS DES TIRS & TIRS CADRÉS (Lignes ajustables)"):
     st.markdown("### 🏹 Tirs Totaux (Match)")
     c1, c2, c3 = st.columns(3)
@@ -280,7 +308,7 @@ if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_wi
         prob_shots_under = poisson.cdf(int(np.floor(t_shots_line)), lam_total_shots)
         prob_shots_over = 1.0 - prob_shots_under
         
-        # Tirs Individuels (Nouveau !)
+        # Tirs Individuels
         prob_h_shots_under = poisson.cdf(int(np.floor(h_shots_line)), lam_h_shots)
         prob_h_shots_over = 1.0 - prob_h_shots_under
         prob_a_shots_under = poisson.cdf(int(np.floor(a_shots_line)), lam_a_shots)
@@ -307,8 +335,8 @@ if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_wi
             "home_goals": preds_goals["home_goals"],      
             "away_goals": preds_goals["away_goals"],      
             f"tirs_match_{t_shots_line}": {"over": prob_shots_over, "under": prob_shots_under},
-            f"tirs_domicile_{h_shots_line}": {"over": prob_h_shots_over, "under": prob_h_shots_under},   # Ajouté
-            f"tirs_exterieur_{a_shots_line}": {"over": prob_a_shots_over, "under": prob_a_shots_under}, # Ajouté
+            f"tirs_domicile_{h_shots_line}": {"over": prob_h_shots_over, "under": prob_h_shots_under},   
+            f"tirs_exterieur_{a_shots_line}": {"over": prob_a_shots_over, "under": prob_a_shots_under}, 
             f"sot_match_{t_sot_line}": {"over": prob_sot_over, "under": prob_sot_under},
             f"sot_domicile_{h_sot_line}": {"over": prob_h_sot_over, "under": prob_h_sot_under},
             f"sot_exterieur_{a_sot_line}": {"over": prob_a_sot_over, "under": prob_a_sot_under}
@@ -322,20 +350,22 @@ if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_wi
             "home_goals": {"over_0_5": hg_o05, "under_0_5": hg_u05, "over_1_5": hg_o15, "under_1_5": hg_u15}, 
             "away_goals": {"over_0_5": ag_o05, "under_0_5": ag_u05, "over_1_5": ag_o15, "under_1_5": ag_u15}, 
             f"tirs_match_{t_shots_line}": {"over": t_shots_o, "under": t_shots_u},
-            f"tirs_domicile_{h_shots_line}": {"over": h_shots_o, "under": h_shots_u},   # Ajouté
-            f"tirs_exterieur_{a_shots_line}": {"over": a_shots_o, "under": a_shots_u}, # Ajouté
+            f"tirs_domicile_{h_shots_line}": {"over": h_shots_o, "under": h_shots_u},   
+            f"tirs_exterieur_{a_shots_line}": {"over": a_shots_o, "under": a_shots_u}, 
             f"sot_match_{t_sot_line}": {"over": t_sot_o, "under": t_sot_u},
             f"sot_domicile_{h_sot_line}": {"over": h_sot_o, "under": h_sot_u},
             f"sot_exterieur_{a_sot_line}": {"over": a_sot_o, "under": a_sot_u}
         }
 
-        # --- 6. MOTEUR DU SCANNER DE VALUE ---
+        # --- 6. MOTEUR DU SCANNER DE VALUE (MODIFIÉ AVEC LE FILTRE) ---
         results = []
         for market, odds in market_odds.items():
             for sel, odd in odds.items():
                 prob = preds_all[market][sel]
                 edge = prob * odd - 1
-                if edge > min_edge:
+                
+                # NOUVEAU : On vérifie l'Edge minimum ET la stratégie de cotes
+                if edge > min_edge and (cote_min <= odd <= cote_max):
                     b = odd - 1
                     kelly_half = max(0.0, (b * prob - (1 - prob)) / b) * 0.5 if b > 0 else 0.0
                     results.append(ValueBetResult(market, sel, prob, odd, edge, kelly_half))
@@ -351,9 +381,9 @@ if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_wi
         c3.metric("Tirs Attendus Dom", f"{lam_h_shots:.1f}")
         c4.metric("Tirs Attendus Ext", f"{lam_a_shots:.1f}")
 
-        st.subheader("💸 Value Bets Détectés")
+        st.subheader(f"💸 Value Bets Détectés (Stratégie : {strategie.split('(')[0].strip()})")
         if not results:
-            st.info("Aucun Value Bet détecté pour ce match avec vos critères actuels.")
+            st.info("Aucun Value Bet détecté pour ce match avec vos critères actuels (Edge ou Cotes hors limites).")
         else:
             for vb in results:
                 display_market = vb.market.upper()
