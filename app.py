@@ -86,9 +86,13 @@ class DixonColesModel:
         constraints = [{"type": "eq", "fun": lambda x: np.sum(x[:n])}]
         result = minimize(neg_log_likelihood, x0, method="SLSQP", constraints=constraints, options={"maxiter": 200})
         
+        if not result.success:
+            st.warning(f"Attention : Le modèle a eu du mal à converger pour ce championnat. Les résultats peuvent être moins précis.")
+            
         attack, defense, rho, home_adv = unpack(result.x)
         self.params = {t: {"attack": attack[i], "defense": defense[i]} for i, t in enumerate(self.teams)}
-        self.rho, self.home_advantage = home_adv
+        self.rho = rho
+        self.home_advantage = home_adv
         return self
 
     def get_lambdas(self, home_team, away_team):
