@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import urllib.request
 import io
+import math
 from scipy.optimize import minimize
 from scipy.stats import poisson
 from dataclasses import dataclass
@@ -176,8 +177,11 @@ def train_all_models(df):
 # ==========================================
 # 4. INTERFACE STREAMLIT & FILTRES
 # ==========================================
-# --- NOUVEAU : Barre latérale pour la stratégie ---
-st.sidebar.header("🎯 Stratégie de Paris")
+st.sidebar.header("🎯 Mode d'Analyse")
+match_mode = st.sidebar.radio("Sélectionnez le contexte", ["Avant-match (Statique)", "En direct (Live)"])
+
+st.sidebar.divider()
+st.sidebar.header("⚙️ Stratégie de Paris")
 st.sidebar.markdown("Sélectionnez la tranche de cotes à cibler selon votre volume hebdomadaire.")
 
 strategie = st.sidebar.selectbox(
@@ -199,10 +203,9 @@ elif strategie == "Volume Moyen (Cotes 1.70 - 2.10)":
 elif strategie == "Volume Élevé (Cotes 1.85 - 2.30)":
     cote_min, cote_max = 1.85, 2.30
 elif strategie == "Volume Massif (Cotes > 2.00)":
-    cote_min, cote_max = 2.00, 100.00 # 100 englobe les très hautes cotes
+    cote_min, cote_max = 2.00, 100.00
 else:
-    cote_min, cote_max = 1.01, 100.00 # Affiche tout par défaut
-
+    cote_min, cote_max = 1.01, 100.00
 
 st.title("🏆 Scanner de Value Bets Pro (Buts & Tirs)")
 
@@ -223,6 +226,19 @@ st.divider()
 col1, col2 = st.columns(2)
 with col1: home_team = st.selectbox("🏠 Équipe à Domicile", options=teams_list)
 with col2: away_team = st.selectbox("✈️ Équipe à l'Extérieur", options=teams_list, index=1)
+
+# --- BLOC PARAMÈTRES LIVE SI ACTIVÉ ---
+live_minute, live_home_score, live_away_score = 0, 0, 0
+if match_mode == "En direct (Live)":
+    st.divider()
+    st.info("⏱️ **Mode Live Activé** : Indiquez l'état actuel de la rencontre pour réajuster le modèle en temps réel.")
+    l_col1, l_col2, l_col3 = st.columns(3)
+    with l_col1:
+        live_minute = st.number_input("Minute du match", min_value=1, max_value=90, value=46)
+    with l_col2:
+        live_home_score = st.number_input("Score Domicile actuel", min_value=0, max_value=10, value=0)
+    with l_col3:
+        live_away_score = st.number_input("Score Extérieur actuel", min_value=0, max_value=10, value=1)
 
 st.divider()
 
@@ -304,15 +320,69 @@ if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_wi
         st.error("Veuillez choisir deux équipes différentes.")
     else:
         # --- 1. CALCULS PRÉDICTIONS MARCHÉS DES BUTS ---
-        preds_goals = models["goals"].predict_goal_markets(home_team, away_team)
-        
+        base_goals_preds = models["goals"].predict_goal_markets(home_team, away_team)
+        lam_h_base = base_goals_preds["expected_goals"]["home"]
+        lam_a_base = base_goals_preds["expected_goals"]["away"]
+
+        # Ajustement Dynamique si mode Live activé
+        if match_mode == "En direct (Live)":
+            ratio_temps = (90 - live_minute) / 90.0
+            lam_h = lam_h_base * ratio_temps
+            lam_a = lam_a_base * ratio_temps
+            
+            # Ajustement tactique selon le score actuel (Game State)
+            score_total_actuel = live_home_score + live_away_score
+            if score_total_actuel == 1:
+                lam_h *= 0.92
+                lam_a *= 0.92
+            elif score_total_actuel >= 3:
+                lam_h *= 1.08
+                lam_a *= 1.08
+                
+            # Recalcul de la matrice des scores pour les buts restants
+            max_goals = 10
+            M = np.zeros((max_goals+1, max_goals+1))
+            for i in range(max_goals+1):
+                for j in range(max_goals+1):
+                    p = poisson.pmf(i, lam_h) * poisson.pmf(j, lam_a) * dixon_coles_adjustment(i, j, lam_h, lam_a, models["goals"].rho)
+                    M[i, j] = p
+            M = np.clip(M, 0, None)
+            M = M / M.sum()
+            goals = np.arange(max_goals+1)
+            
+            # Buts totaux restants nécessaires pour l'Over 2.5 global
+            buts_manquants_over25 = max(0, 3 - score_total_actuel)
+            if buts_manquants_over25 == 0:
+                prob_over_25 = 1.0
+                prob_under_25 = 0.0
+            else:
+                prob_over_25 = 0
+                for k in range(buts_manquants_over25, 10):
+                    prob_over_25 += (math.exp(-(lam_h + lam_a)) * ((lam_h + lam_a)**k)) / math.factorial(k)
+                prob_under_25 = 1.0 - prob_over_25
+
+            preds_goals = {
+                "1X2": {"H": np.tril(M, -1).sum(), "D": np.trace(M), "A": np.triu(M, 1).sum()},
+                "over_under_2_5": {"over": prob_over_25, "under": prob_under_25},
+                "btts": {"yes": M[1:, 1:].sum(), "no": 1 - M[1:, 1:].sum()},
+                "home_goals": {"over_0_5": M[1:, :].sum(), "under_0_5": M[0, :].sum(), "over_1_5": M[2:, :].sum(), "under_1_5": M[:2, :].sum()},
+                "away_goals": {"over_0_5": M[:, 1:].sum(), "under_0_5": M[:, 0].sum(), "over_1_5": M[:, 2:].sum(), "under_1_5": M[:, :2].sum()},
+                "expected_goals": {"home": lam_h, "away": lam_a},
+            }
+        else:
+            preds_goals = base_goals_preds
+            lam_h, lam_a = lam_h_base, lam_a_base
+
         # --- 2. CALCULS PRÉDICTIONS MARCHÉS DES TIRS ---
         lam_h_shots, lam_a_shots = models["shots"].get_lambdas(home_team, away_team)
+        if match_mode == "En direct (Live)":
+            lam_h_shots *= ((90 - live_minute) / 90.0)
+            lam_a_shots *= ((90 - live_minute) / 90.0)
+            
         lam_total_shots = lam_h_shots + lam_a_shots
         prob_shots_under = poisson.cdf(int(np.floor(t_shots_line)), lam_total_shots)
         prob_shots_over = 1.0 - prob_shots_under
         
-        # Tirs Individuels
         prob_h_shots_under = poisson.cdf(int(np.floor(h_shots_line)), lam_h_shots)
         prob_h_shots_over = 1.0 - prob_h_shots_under
         prob_a_shots_under = poisson.cdf(int(np.floor(a_shots_line)), lam_a_shots)
@@ -320,12 +390,14 @@ if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_wi
 
         # --- 3. CALCULS PRÉDICTIONS MARCHÉS DES SOT ---
         lam_h_sot, lam_a_sot = models["sot"].get_lambdas(home_team, away_team)
+        if match_mode == "En direct (Live)":
+            lam_h_sot *= ((90 - live_minute) / 90.0)
+            lam_a_sot *= ((90 - live_minute) / 90.0)
+            
         lam_total_sot = lam_h_sot + lam_a_sot
-        
         prob_sot_under = poisson.cdf(int(np.floor(t_sot_line)), lam_total_sot)
         prob_sot_over = 1.0 - prob_sot_under
         
-        # SOT Individuels
         prob_h_sot_under = poisson.cdf(int(np.floor(h_sot_line)), lam_h_sot)
         prob_h_sot_over = 1.0 - prob_h_sot_under
         prob_a_sot_under = poisson.cdf(int(np.floor(a_sot_line)), lam_a_sot)
@@ -361,14 +433,13 @@ if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_wi
             f"sot_exterieur_{a_sot_line}": {"over": a_sot_o, "under": a_sot_u}
         }
 
-        # --- 6. MOTEUR DU SCANNER DE VALUE (MODIFIÉ AVEC LE FILTRE) ---
+        # --- 6. MOTEUR DU SCANNER DE VALUE ---
         results = []
         for market, odds in market_odds.items():
             for sel, odd in odds.items():
                 prob = preds_all[market][sel]
                 edge = prob * odd - 1
                 
-                # NOUVEAU : On vérifie l'Edge minimum ET la stratégie de cotes
                 if edge > min_edge and (cote_min <= odd <= cote_max):
                     b = odd - 1
                     kelly_half = max(0.0, (b * prob - (1 - prob)) / b) * 0.5 if b > 0 else 0.0
@@ -378,6 +449,8 @@ if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_wi
 
         # --- 7. AFFICHAGE DES RÉSULTATS DANS L'APPLICATION ---
         st.header(f"📊 Rapport : {home_team} vs {away_team}")
+        if match_mode == "En direct (Live)":
+            st.caption(f"⚡ Analyse Live à la {live_minute}e minute | Score actuel : {live_home_score} - {live_away_score}")
         
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("xG Dom", f"{preds_goals['expected_goals']['home']:.2f}")
@@ -393,7 +466,6 @@ if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_wi
                 display_market = vb.market.upper()
                 display_selection = vb.selection.upper()
                 
-                # Formatage propre des titres de marchés
                 if vb.market == "home_goals":
                     display_market = f"BUTS {home_team.upper()}"
                 elif vb.market == "away_goals":
