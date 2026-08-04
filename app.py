@@ -116,8 +116,19 @@ class DixonColesModel:
     def predict_goal_markets(self, home_team, away_team, max_goals=10):
         M, lam_h, lam_a = self.score_matrix(home_team, away_team, max_goals)
         goals = np.arange(max_goals+1)
+        
+        # Probabilités 1X2
+        h_prob = np.tril(M, -1).sum()
+        d_prob = np.trace(M)
+        a_prob = np.triu(M, 1).sum()
+        
         return {
-            "1X2": {"H": np.tril(M, -1).sum(), "D": np.trace(M), "A": np.triu(M, 1).sum()},
+            "1X2": {"H": h_prob, "D": d_prob, "A": a_prob},
+            "double_chance": {
+                "1X": h_prob + d_prob,
+                "12": h_prob + a_prob,
+                "X2": d_prob + a_prob
+            },
             "over_under_2_5": {"over": M[goals[:, None] + goals[None, :] > 2.5].sum(), "under": M[goals[:, None] + goals[None, :] < 2.5].sum()},
             "btts": {"yes": M[1:, 1:].sum(), "no": 1 - M[1:, 1:].sum()},
             "home_goals": {"over_0_5": M[1:, :].sum(), "under_0_5": M[0, :].sum(), "over_1_5": M[2:, :].sum(), "under_1_5": M[:2, :].sum()},
@@ -244,13 +255,21 @@ st.divider()
 
 st.subheader("2️⃣ Saisissez les cotes du bookmaker")
 
-# Expander 1 : Marchés principaux
-with st.expander("⚽ MARCHÉS DES BUTS PRINCIPAUX (1X2, O/U 2.5, BTTS)", expanded=True):
+# Expander 1 : Marchés principaux + Double Chance
+with st.expander("⚽ MARCHÉS DES BUTS PRINCIPAUX (1X2, DOUBLE CHANCE, O/U 2.5, BTTS)", expanded=True):
+    st.markdown("### 🏆 Résultat Match (1X2)")
     c1, c2, c3 = st.columns(3)
-    h_odd = c1.number_input("Cote 1", value=2.00, step=0.01)
-    d_odd = c2.number_input("Cote X", value=3.40, step=0.01)
-    a_odd = c3.number_input("Cote 2", value=3.80, step=0.01)
+    h_odd = c1.number_input("Cote 1 (Domicile)", value=2.00, step=0.01)
+    d_odd = c2.number_input("Cote X (Nul)", value=3.40, step=0.01)
+    a_odd = c3.number_input("Cote 2 (Extérieur)", value=3.80, step=0.01)
 
+    st.markdown("### 🛡️ Double Chance")
+    c1, c2, c3 = st.columns(3)
+    dc_1x = c1.number_input("1X (Dom ou Nul)", value=1.28, step=0.01)
+    dc_12 = c2.number_input("12 (Dom ou Ext)", value=1.30, step=0.01)
+    dc_x2 = c3.number_input("X2 (Nul ou Ext)", value=1.70, step=0.01)
+
+    st.markdown("### ⚽ Buts & BTTS")
     c1, c2, c3, c4 = st.columns(4)
     ou_over = c1.number_input("Over 2.5 (Buts)", value=1.90, step=0.01)
     ou_under = c2.number_input("Under 2.5 (Buts)", value=1.90, step=0.01)
@@ -350,6 +369,11 @@ if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_wi
             M = M / M.sum()
             goals = np.arange(max_goals+1)
             
+            # Probabilités 1X2 en live
+            h_prob = np.tril(M, -1).sum()
+            d_prob = np.trace(M)
+            a_prob = np.triu(M, 1).sum()
+            
             # Buts totaux restants nécessaires pour l'Over 2.5 global
             buts_manquants_over25 = max(0, 3 - score_total_actuel)
             if buts_manquants_over25 == 0:
@@ -362,7 +386,12 @@ if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_wi
                 prob_under_25 = 1.0 - prob_over_25
 
             preds_goals = {
-                "1X2": {"H": np.tril(M, -1).sum(), "D": np.trace(M), "A": np.triu(M, 1).sum()},
+                "1X2": {"H": h_prob, "D": d_prob, "A": a_prob},
+                "double_chance": {
+                    "1X": h_prob + d_prob,
+                    "12": h_prob + a_prob,
+                    "X2": d_prob + a_prob
+                },
                 "over_under_2_5": {"over": prob_over_25, "under": prob_under_25},
                 "btts": {"yes": M[1:, 1:].sum(), "no": 1 - M[1:, 1:].sum()},
                 "home_goals": {"over_0_5": M[1:, :].sum(), "under_0_5": M[0, :].sum(), "over_1_5": M[2:, :].sum(), "under_1_5": M[:2, :].sum()},
@@ -406,6 +435,7 @@ if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_wi
         # --- 4. STRUCTURE DE TOUTES LES PRÉDICTIONS ---
         preds_all = {
             "1X2": preds_goals["1X2"],
+            "double_chance": preds_goals["double_chance"],
             "over_under_2_5": preds_goals["over_under_2_5"],
             "btts": preds_goals["btts"],
             "home_goals": preds_goals["home_goals"],      
@@ -421,6 +451,7 @@ if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_wi
         # --- 5. STRUCTURE DE TOUTES LES COTES BOOKMAKERS ---
         market_odds = {
             "1X2": {"H": h_odd, "D": d_odd, "A": a_odd},
+            "double_chance": {"1X": dc_1x, "12": dc_12, "X2": dc_x2},
             "over_under_2_5": {"over": ou_over, "under": ou_under},
             "btts": {"yes": btts_yes, "no": btts_no},
             "home_goals": {"over_0_5": hg_o05, "under_0_5": hg_u05, "over_1_5": hg_o15, "under_1_5": hg_u15}, 
@@ -466,7 +497,15 @@ if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_wi
                 display_market = vb.market.upper()
                 display_selection = vb.selection.upper()
                 
-                if vb.market == "home_goals":
+                if vb.market == "double_chance":
+                    display_market = "DOUBLE CHANCE"
+                    if vb.selection == "1X":
+                        display_selection = f"1X ({home_team} OU NUL)"
+                    elif vb.selection == "12":
+                        display_selection = f"12 ({home_team} OU {away_team})"
+                    elif vb.selection == "X2":
+                        display_selection = f"X2 (NUL OU {away_team})"
+                elif vb.market == "home_goals":
                     display_market = f"BUTS {home_team.upper()}"
                 elif vb.market == "away_goals":
                     display_market = f"BUTS {away_team.upper()}"
