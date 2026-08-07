@@ -5,7 +5,7 @@ import urllib.request
 import io
 import math
 from scipy.optimize import minimize
-from scipy.stats import poisson
+from scipy.stats import poisson, nbinom # NOUVEAU: Import de nbinom
 from dataclasses import dataclass
 
 # ==========================================
@@ -32,7 +32,7 @@ SEASONS = ["2425", "2526", "2627"]
 TIME_DECAY_HALFLIFE_DAYS = 180
 
 # ==========================================
-# 2. LOGIQUE MATHÉMATIQUE (DIXON-COLES)
+# 2. LOGIQUE MATHÉMATIQUE (DIXON-COLES & NBINOM)
 # ==========================================
 def time_weights(dates, halflife_days):
     days_ago = (dates.max() - dates).dt.days.values
@@ -49,6 +49,23 @@ def dixon_coles_adjustment(home_goals, away_goals, lam_home, lam_away, rho):
     elif home_goals == 1 and away_goals == 1:
         return 1 - rho
     return 1.0
+
+# --- NOUVELLE FONCTION POUR LA BINOMIALE NÉGATIVE ---
+def proba_tirs_nbinom(mu, var, ligne_bookmaker):
+    """Calcule les probas statistiques avec la Loi Binomiale Négative si surdispersion"""
+    seuil = int(np.floor(ligne_bookmaker))
+    
+    # Sécurité : S'il n'y a pas de surdispersion, on repasse sur Poisson
+    if var <= mu or math.isnan(var) or var == 0:
+        p_under = poisson.cdf(seuil, mu)
+    else:
+        # Conversion moyenne/variance vers les paramètres n et p de scipy.stats.nbinom
+        p = mu / var
+        n = (mu**2) / (var - mu)
+        p_under = nbinom.cdf(seuil, n, p)
+        
+    return p_under, 1.0 - p_under
+# ----------------------------------------------------
 
 class DixonColesModel:
     def __init__(self):
@@ -206,7 +223,6 @@ strategie = st.sidebar.selectbox(
     ]
 )
 
-# Attribution des bornes selon la stratégie choisie
 if strategie == "Volume Faible (Cotes 1.50 - 1.85)":
     cote_min, cote_max = 1.50, 1.85
 elif strategie == "Volume Moyen (Cotes 1.70 - 2.10)":
@@ -343,13 +359,11 @@ if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_wi
         lam_h_base = base_goals_preds["expected_goals"]["home"]
         lam_a_base = base_goals_preds["expected_goals"]["away"]
 
-        # Ajustement Dynamique si mode Live activé
         if match_mode == "En direct (Live)":
             ratio_temps = (90 - live_minute) / 90.0
             lam_h = lam_h_base * ratio_temps
             lam_a = lam_a_base * ratio_temps
             
-            # Ajustement tactique selon le score actuel (Game State)
             score_total_actuel = live_home_score + live_away_score
             if score_total_actuel == 1:
                 lam_h *= 0.92
@@ -358,7 +372,6 @@ if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_wi
                 lam_h *= 1.08
                 lam_a *= 1.08
                 
-            # Recalcul de la matrice des scores pour les buts restants
             max_goals = 10
             M = np.zeros((max_goals+1, max_goals+1))
             for i in range(max_goals+1):
@@ -369,12 +382,10 @@ if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_wi
             M = M / M.sum()
             goals = np.arange(max_goals+1)
             
-            # Probabilités 1X2 en live
             h_prob = np.tril(M, -1).sum()
             d_prob = np.trace(M)
             a_prob = np.triu(M, 1).sum()
             
-            # Buts totaux restants nécessaires pour l'Over 2.5 global
             buts_manquants_over25 = max(0, 3 - score_total_actuel)
             if buts_manquants_over25 == 0:
                 prob_over_25 = 1.0
@@ -402,35 +413,53 @@ if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_wi
             preds_goals = base_goals_preds
             lam_h, lam_a = lam_h_base, lam_a_base
 
-        # --- 2. CALCULS PRÉDICTIONS MARCHÉS DES TIRS ---
+        # --- 2. CALCULS PRÉDICTIONS MARCHÉS DES TIRS (BINOMIALE NÉGATIVE) ---
         lam_h_shots, lam_a_shots = models["shots"].get_lambdas(home_team, away_team)
+        
+        # Extraction de la variance historique
+        h_shots_data = df[df['HomeTeam'] == home_team]['HS']
+        a_shots_data = df[df['AwayTeam'] == away_team]['AS']
+        var_h_shots = np.var(h_shots_data, ddof=1) if len(h_shots_data) > 1 else lam_h_shots
+        var_a_shots = np.var(a_shots_data, ddof=1) if len(a_shots_data) > 1 else lam_a_shots
+
         if match_mode == "En direct (Live)":
-            lam_h_shots *= ((90 - live_minute) / 90.0)
-            lam_a_shots *= ((90 - live_minute) / 90.0)
+            ratio = (90 - live_minute) / 90.0
+            lam_h_shots *= ratio
+            lam_a_shots *= ratio
+            var_h_shots *= ratio # La variance s'ajuste aussi avec le temps restant
+            var_a_shots *= ratio
             
         lam_total_shots = lam_h_shots + lam_a_shots
-        prob_shots_under = poisson.cdf(int(np.floor(t_shots_line)), lam_total_shots)
-        prob_shots_over = 1.0 - prob_shots_under
+        var_total_shots = var_h_shots + var_a_shots # Variance globale estimée
         
-        prob_h_shots_under = poisson.cdf(int(np.floor(h_shots_line)), lam_h_shots)
-        prob_h_shots_over = 1.0 - prob_h_shots_under
-        prob_a_shots_under = poisson.cdf(int(np.floor(a_shots_line)), lam_a_shots)
-        prob_a_shots_over = 1.0 - prob_a_shots_under
+        # Calcul avec Binomiale Négative
+        prob_shots_under, prob_shots_over = proba_tirs_nbinom(lam_total_shots, var_total_shots, t_shots_line)
+        prob_h_shots_under, prob_h_shots_over = proba_tirs_nbinom(lam_h_shots, var_h_shots, h_shots_line)
+        prob_a_shots_under, prob_a_shots_over = proba_tirs_nbinom(lam_a_shots, var_a_shots, a_shots_line)
 
-        # --- 3. CALCULS PRÉDICTIONS MARCHÉS DES SOT ---
+        # --- 3. CALCULS PRÉDICTIONS MARCHÉS DES SOT (BINOMIALE NÉGATIVE) ---
         lam_h_sot, lam_a_sot = models["sot"].get_lambdas(home_team, away_team)
+        
+        # Extraction de la variance historique pour les Tirs Cadrés
+        h_sot_data = df[df['HomeTeam'] == home_team]['HST']
+        a_sot_data = df[df['AwayTeam'] == away_team]['AST']
+        var_h_sot = np.var(h_sot_data, ddof=1) if len(h_sot_data) > 1 else lam_h_sot
+        var_a_sot = np.var(a_sot_data, ddof=1) if len(a_sot_data) > 1 else lam_a_sot
+
         if match_mode == "En direct (Live)":
-            lam_h_sot *= ((90 - live_minute) / 90.0)
-            lam_a_sot *= ((90 - live_minute) / 90.0)
+            ratio = (90 - live_minute) / 90.0
+            lam_h_sot *= ratio
+            lam_a_sot *= ratio
+            var_h_sot *= ratio
+            var_a_sot *= ratio
             
         lam_total_sot = lam_h_sot + lam_a_sot
-        prob_sot_under = poisson.cdf(int(np.floor(t_sot_line)), lam_total_sot)
-        prob_sot_over = 1.0 - prob_sot_under
+        var_total_sot = var_h_sot + var_a_sot
         
-        prob_h_sot_under = poisson.cdf(int(np.floor(h_sot_line)), lam_h_sot)
-        prob_h_sot_over = 1.0 - prob_h_sot_under
-        prob_a_sot_under = poisson.cdf(int(np.floor(a_sot_line)), lam_a_sot)
-        prob_a_sot_over = 1.0 - prob_a_sot_under
+        # Calcul avec Binomiale Négative
+        prob_sot_under, prob_sot_over = proba_tirs_nbinom(lam_total_sot, var_total_sot, t_sot_line)
+        prob_h_sot_under, prob_h_sot_over = proba_tirs_nbinom(lam_h_sot, var_h_sot, h_sot_line)
+        prob_a_sot_under, prob_a_sot_over = proba_tirs_nbinom(lam_a_sot, var_a_sot, a_sot_line)
 
         # --- 4. STRUCTURE DE TOUTES LES PRÉDICTIONS ---
         preds_all = {
@@ -473,6 +502,7 @@ if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_wi
                 
                 if edge > min_edge and (cote_min <= odd <= cote_max):
                     b = odd - 1
+                    # Mise Kelly 1/4 conservée
                     kelly_quart = max(0.0, (b * prob - (1 - prob)) / b) * 0.25 if b > 0 else 0.0
                     results.append(ValueBetResult(market, sel, prob, odd, edge, kelly_quart))
         
@@ -503,21 +533,4 @@ if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_wi
                         display_selection = f"1X ({home_team} OU NUL)"
                     elif vb.selection == "12":
                         display_selection = f"12 ({home_team} OU {away_team})"
-                    elif vb.selection == "X2":
-                        display_selection = f"X2 (NUL OU {away_team})"
-                elif vb.market == "home_goals":
-                    display_market = f"BUTS {home_team.upper()}"
-                elif vb.market == "away_goals":
-                    display_market = f"BUTS {away_team.upper()}"
-                elif vb.market.startswith("tirs_domicile_"):
-                    display_market = f"TIRS {home_team.upper()}"
-                elif vb.market.startswith("tirs_exterieur_"):
-                    display_market = f"TIRS {away_team.upper()}"
-                elif vb.market.startswith("sot_domicile_"):
-                    display_market = f"SOT {home_team.upper()}"
-                elif vb.market.startswith("sot_exterieur_"):
-                    display_market = f"SOT {away_team.upper()}"
-
-                st.success(f"🎯 **[{display_market}] Option : {display_selection}**")
-                st.write(f"• Probabilité modèle : **{vb.model_prob:.1%}** | Cote saisie : **{vb.bookmaker_odds}**")
-                st.write(f"• **EDGE : +{vb.edge:.1%}** | Mise Kelly (1/4) conseillée : **{vb.kelly_quart:.1%}**")
+                    elif vb.selection == "
