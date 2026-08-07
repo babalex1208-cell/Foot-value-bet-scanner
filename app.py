@@ -146,7 +146,7 @@ class ValueBetResult:
     model_prob: float
     bookmaker_odds: float
     edge: float
-    kelly_half: float
+    kelly_quart: float
 
 def remove_overround(odds):
     implied = {k: 1/v for k, v in odds.items()}
@@ -473,8 +473,8 @@ if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_wi
                 
                 if edge > min_edge and (cote_min <= odd <= cote_max):
                     b = odd - 1
-                    kelly_half = max(0.0, (b * prob - (1 - prob)) / b) * 0.5 if b > 0 else 0.0
-                    results.append(ValueBetResult(market, sel, prob, odd, edge, kelly_half))
+                    kelly_quart = max(0.0, (b * prob - (1 - prob)) / b) * 0.25 if b > 0 else 0.0
+                    results.append(ValueBetResult(market, sel, prob, odd, edge, kelly_quart))
         
         results.sort(key=lambda x: x.edge, reverse=True)
 
@@ -520,4 +520,4 @@ if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_wi
 
                 st.success(f"🎯 **[{display_market}] Option : {display_selection}**")
                 st.write(f"• Probabilité modèle : **{vb.model_prob:.1%}** | Cote saisie : **{vb.bookmaker_odds}**")
-                st.write(f"• **EDGE : +{vb.edge:.1%}** | Mise Kelly (1/2) conseillée : **{vb.kelly_half:.1%}**")
+                st.write(f"• **EDGE : +{vb.edge:.1%}** | Mise Kelly (1/4) conseillée : **{vb.kelly_quart:.1%}**")
