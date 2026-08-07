@@ -533,4 +533,21 @@ if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_wi
                         display_selection = f"1X ({home_team} OU NUL)"
                     elif vb.selection == "12":
                         display_selection = f"12 ({home_team} OU {away_team})"
-                    elif vb.selection == "
+                    elif vb.selection == "X2":
+                        display_selection = f"X2 (NUL OU {away_team})"
+                elif vb.market == "home_goals":
+                    display_market = f"BUTS {home_team.upper()}"
+                elif vb.market == "away_goals":
+                    display_market = f"BUTS {away_team.upper()}"
+                elif vb.market.startswith("tirs_domicile_"):
+                    display_market = f"TIRS {home_team.upper()}"
+                elif vb.market.startswith("tirs_exterieur_"):
+                    display_market = f"TIRS {away_team.upper()}"
+                elif vb.market.startswith("sot_domicile_"):
+                    display_market = f"SOT {home_team.upper()}"
+                elif vb.market.startswith("sot_exterieur_"):
+                    display_market = f"SOT {away_team.upper()}"
+
+                st.success(f"🎯 **[{display_market}] Option : {display_selection}**")
+                st.write(f"• Probabilité estimée : **{vb.model_prob:.1%}** | Cote saisie : **{vb.bookmaker_odds}**")
+                st.write(f"• **EDGE : +{vb.edge:.1%}** | Mise Kelly (1/4) conseillée : **{vb.kelly_quart:.1%}**")
