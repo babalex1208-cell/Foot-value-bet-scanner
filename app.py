@@ -216,21 +216,12 @@ strategie = st.sidebar.selectbox(
     "Filtre de cotes",
     [
         "Afficher Tout (Aucun filtre)",
-        "Volume Faible (Cotes 1.50 - 1.85)",
-        "Volume Moyen (Cotes 1.70 - 2.10)",
-        "Volume Élevé (Cotes 1.85 - 2.30)",
-        "Volume Massif (Cotes > 2.00)"
+        "Volume cible (Cotes 1.50 - 2.3)",
     ]
 )
 
-if strategie == "Volume Faible (Cotes 1.50 - 1.85)":
-    cote_min, cote_max = 1.50, 1.85
-elif strategie == "Volume Moyen (Cotes 1.70 - 2.10)":
-    cote_min, cote_max = 1.70, 2.10
-elif strategie == "Volume Élevé (Cotes 1.85 - 2.30)":
-    cote_min, cote_max = 1.85, 2.30
-elif strategie == "Volume Massif (Cotes > 2.00)":
-    cote_min, cote_max = 2.00, 100.00
+if strategie == "Volume cible (Cotes 1.50 - 2.3)":
+    cote_min, cote_max = 1.50, 2.3
 else:
     cote_min, cote_max = 1.01, 100.00
 
