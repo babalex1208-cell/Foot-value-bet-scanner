@@ -339,7 +339,7 @@ with st.expander("📊 MARCHÉS DES TIRS & TIRS CADRÉS (Lignes ajustables)"):
 
 st.divider()
 
-min_edge = st.slider("Seuil d'Edge minimum (%)", min_value=0.0, max_value=15.0, value=3.0, step=0.5) / 100
+min_edge = st.slider("Seuil d'Edge minimum (%)", min_value=0.0, max_value=15.0, value=5.0, step=0.5) / 100
 
 if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_width=True):
     if home_team == away_team:
