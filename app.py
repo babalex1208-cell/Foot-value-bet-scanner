@@ -173,27 +173,48 @@ def remove_overround(odds):
 @st.cache_data(show_spinner=False)
 def load_and_clean_data(league_code):
     dfs = []
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
     for s in SEASONS:
         url = f"https://www.football-data.co.uk/mmz4281/{s}/{league_code}.csv"
         try:
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            resp = urllib.request.urlopen(req)
-            df = pd.read_csv(io.StringIO(resp.read().decode('utf-8')))
-            df['Season'] = s
-            dfs.append(df)
-        except:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                raw_data = resp.read()
+                # Décodage tolérant : teste utf-8 puis repli sur latin-1
+                try:
+                    text = raw_data.decode("utf-8")
+                except UnicodeDecodeError:
+                    text = raw_data.decode("latin-1")
+
+                df = pd.read_csv(io.StringIO(text))
+                df["Season"] = s
+                dfs.append(df)
+        except Exception as e:
+            # Affiche la cause exacte dans la barre latérale pour faciliter le diagnostic
+            st.sidebar.warning(f"⚠️ Saison {s} non chargée : {e}")
             continue
-    if not dfs: return None
-    
+
+    if not dfs:
+        return None
+
     data = pd.concat(dfs, ignore_index=True)
-    cols_to_clean = ['HomeTeam', 'AwayTeam', 'FTHG', 'FTAG', 'HS', 'AS', 'HST', 'AST']
-    data = data.dropna(subset=[c for c in cols_to_clean if c in data.columns])
-    data['Date'] = pd.to_datetime(data['Date'], dayfirst=True)
+    cols_to_clean = ["HomeTeam", "AwayTeam", "FTHG", "FTAG", "HS", "AS", "HST", "AST"]
+    existing_cols = [c for c in cols_to_clean if c in data.columns]
+    data = data.dropna(subset=existing_cols)
     
-    for col in ['FTHG', 'FTAG', 'HS', 'AS', 'HST', 'AST']:
+    # Conversion sécurisée de la date
+    data["Date"] = pd.to_datetime(data["Date"], dayfirst=True, errors="coerce")
+    data = data.dropna(subset=["Date"])
+
+    for col in ["FTHG", "FTAG", "HS", "AS", "HST", "AST"]:
         if col in data.columns:
             data[col] = data[col].astype(int)
+
     return data
+
 
 @st.cache_resource(show_spinner=False)
 def train_all_models(df):
