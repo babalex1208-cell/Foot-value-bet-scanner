@@ -170,7 +170,6 @@ def remove_overround(odds):
     overround = sum(implied.values())
     return {k: v/overround for k, v in implied.items()}
 
-@st.cache_data(show_spinner=False)
 def load_and_clean_data(league_code):
     dfs = []
     headers = {
