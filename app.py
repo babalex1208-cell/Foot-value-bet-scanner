@@ -4,6 +4,7 @@ import numpy as np
 import urllib.request
 import io
 import ssl
+import cloudscraper
 import requests
 import math
 from scipy.optimize import minimize
@@ -174,68 +175,32 @@ def remove_overround(odds):
 
 def load_and_clean_data(league_code):
   dfs = []
-  errors_log = []
-
-  # Simulation d'un vrai navigateur récent (pour éviter le blocage Cloudflare)
-  headers = {
-      "User-Agent": (
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-          " (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-      ),
-      "Accept": (
-          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
-      ),
-      "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8",
-  }
+  # Simulation d'un navigateur contournant le challenge Cloudflare
+  scraper = cloudscraper.create_scraper()
 
   for s in SEASONS:
     url = f"https://www.football-data.co.uk/mmz4281/{s}/{league_code}.csv"
-
-    # --- Tentative 1 : via Requests ---
     try:
-      response = requests.get(url, headers=headers, timeout=10)
-      response.raise_for_status()
+      response = scraper.get(url, timeout=10)
+      if response.status_code == 200:
+        try:
+          content = response.content.decode("utf-8")
+        except UnicodeDecodeError:
+          content = response.content.decode("latin-1")
 
-      # Gestion des encodages (UTF-8 ou Latin-1 pour les accents)
-      try:
-        content = response.content.decode("utf-8")
-      except UnicodeDecodeError:
-        content = response.content.decode("latin-1")
+        df = pd.read_csv(io.StringIO(content))
+        df["Season"] = s
+        dfs.append(df)
+      else:
+        st.sidebar.warning(f"Saison {s} : Erreur HTTP {response.status_code}")
+    except Exception as e:
+      st.sidebar.warning(f"Saison {s} : {e}")
 
-      df = pd.read_csv(io.StringIO(content))
-      df["Season"] = s
-      dfs.append(df)
-
-    except Exception as e1:
-      # --- Tentative 2 : Secours via Urllib sans vérification SSL stricte ---
-      try:
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
-          raw = resp.read()
-          try:
-            content = raw.decode("utf-8")
-          except UnicodeDecodeError:
-            content = raw.decode("latin-1")
-          df = pd.read_csv(io.StringIO(content))
-          df["Season"] = s
-          dfs.append(df)
-      except Exception as e2:
-        errors_log.append(f"Saison {s} ({url}) ➔ {e1}")
-
-  # Si TOUTES les saisons échouent, on AFFICHE les erreurs exactes
   if not dfs:
-    st.error(
-        "❌ Échec du téléchargement. Voici le détail des erreurs du serveur :"
-    )
-    for err in errors_log:
-      st.warning(err)
     return None
 
-  # Assemblage et nettoyage si au moins 1 saison a réussi
   data = pd.concat(dfs, ignore_index=True)
+
   cols_to_clean = [
       "HomeTeam",
       "AwayTeam",
