@@ -4,7 +4,7 @@ import numpy as np
 import urllib.request
 import io
 import ssl
-import request
+import requests
 import math
 from scipy.optimize import minimize
 from scipy.stats import poisson, nbinom # NOUVEAU: Import de nbinom
