@@ -173,6 +173,7 @@ def remove_overround(odds):
     overround = sum(implied.values())
     return {k: v/overround for k, v in implied.items()}
 
+@st.cache_data(ttl=3600)
 def load_and_clean_data(league_code):
   dfs = []
   # Simulation d'un navigateur contournant le challenge Cloudflare
