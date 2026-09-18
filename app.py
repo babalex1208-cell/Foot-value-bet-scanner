@@ -295,42 +295,6 @@ st.sidebar.progress(pct_buts)
 
 st.sidebar.divider()
 
-# --- 3. PARAMÈTRES & FILTRES DU MATCH (Avant-match / Live, Cotes min/max, Edge min) ---
-st.sidebar.subheader("⚙️ Filtres de Recherche")
-
-match_mode = st.sidebar.radio(
-    "Mode de match :", options=["Avant-match", "En direct (Live)"]
-)
-
-if match_mode == "En direct (Live)":
-  live_minute = st.sidebar.slider("Minute du match", 1, 90, 45)
-  col_s1, col_s2 = st.sidebar.columns(2)
-  with col_s1:
-    live_home_score = st.sidebar.number_input(
-        "Score Domicile", min_value=0, value=0
-    )
-  with col_s2:
-    live_away_score = st.sidebar.number_input(
-        "Score Extérieur", min_value=0, value=0
-    )
-
-col_c1, col_c2 = st.sidebar.columns(2)
-with col_c1:
-  cote_min = st.sidebar.number_input(
-      "Cote Min", min_value=1.01, value=1.30, step=0.05
-  )
-with col_c2:
-  cote_max = st.sidebar.number_input(
-      "Cote Max", min_value=1.01, value=4.00, step=0.10
-  )
-
-min_edge = (
-    st.sidebar.slider(
-        "Edge minimum (%)", min_value=0.0, max_value=20.0, value=3.0, step=0.5
-    )
-    / 100.0
-)
-
 
 cote_min, cote_max = 1.50, 2.3
 
