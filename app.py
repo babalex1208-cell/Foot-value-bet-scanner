@@ -3,21 +3,19 @@ import pandas as pd
 import numpy as np
 import urllib.request
 import io
+import ssl
+import cloudscraper
+import requests
 import math
-import gspread
-from google.oauth2.service_account import Credentials
 from scipy.optimize import minimize
-from scipy.stats import poisson, nbinom
+from scipy.stats import poisson, nbinom # NOUVEAU: Import de nbinom
 from dataclasses import dataclass
+import plotly.express as px
 
 # ==========================================
-# 1. CONFIGURATION INITIALE
+# 1. CONFIGURATION
 # ==========================================
 st.set_page_config(page_title="Value Bet Scanner Pro", page_icon="⚽", layout="wide")
-
-# Identifiants Google Sheets
-SPREADSHEET_ID = "11fcyQntgVPi2xjF0GXIeKAZkXrhRkwq2sfysO325kaI"
-SHEET_GID = 475064708
 
 LEAGUES = {
     "premier_league": {"country": "Angleterre - Premier League", "fd_code": "E0"},
@@ -38,127 +36,7 @@ SEASONS = ["2425", "2526", "2627"]
 TIME_DECAY_HALFLIFE_DAYS = 180
 
 # ==========================================
-# 2. MODULE PINNACLE & GOOGLE SHEETS (LUNDI)
-# ==========================================
-def get_gspread_client():
-    """Connexion à Google Sheets via st.secrets."""
-    scope = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive"
-    ]
-    credentials = Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"], scopes=scope
-    )
-    return gspread.authorize(credentials)
-
-def fetch_pinnacle_data_from_fd(season="2526"):
-    """Télécharge les données récentes pour toutes les ligues."""
-    fd_cache = {}
-    for key, info in LEAGUES.items():
-        code = info["fd_code"]
-        url = f"https://www.football-data.co.uk/mmz4281/{season}/{code}.csv"
-        try:
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            resp = urllib.request.urlopen(req)
-            df = pd.read_csv(io.StringIO(resp.read().decode('utf-8')))
-            df['Date'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce')
-            fd_cache[code] = df
-        except Exception:
-            continue
-    return fd_cache
-
-def update_clv_in_google_sheet():
-    """Lit le Sheet, calcule la CLV Pinnacle et l'écrit en colonne H à partir de la ligne 4."""
-    client = get_gspread_client()
-    spreadsheet = client.open_by_key(SPREADSHEET_ID)
-    
-    # Sélection de la feuille via GID
-    worksheet = None
-    for ws in spreadsheet.worksheets():
-        if ws.id == SHEET_GID:
-            worksheet = ws
-            break
-    if not worksheet:
-        worksheet = spreadsheet.sheet1
-
-    all_rows = worksheet.get_all_values()
-    if len(all_rows) < 4:
-        return 0, "Le Google Sheet ne contient pas suffisamment de lignes (minimum 4)."
-
-    # Ligne 3 = En-têtes | Lignes 4+ = Données
-    headers = [h.strip().lower() for h in all_rows[2]]
-    
-    # Recherche dynamique ou par défaut des colonnes principales
-    def find_col(possible_names, default_idx):
-        for name in possible_names:
-            if name in headers:
-                return headers.index(name)
-        return default_idx
-
-    col_code = find_col(['code', 'league_code', 'championnat', 'ligue'], 0)
-    col_home = find_col(['hometeam', 'domicile', 'home'], 1)
-    col_away = find_col(['awayteam', 'extérieur', 'exterieur', 'away'], 2)
-    col_sel  = find_col(['selection', 'pari', 'choix', 'issue'], 3)
-    col_odd  = find_col(['cote_prise', 'cote', 'odd'], 4)
-
-    # Récupération des CSV Football-Data
-    fd_cache = fetch_pinnacle_data_from_fd()
-    
-    updates = []
-    updated_count = 0
-
-    # Parcours à partir de la ligne 4 (index 3 en Python)
-    for row_idx in range(3, len(all_rows)):
-        row = all_rows[row_idx]
-        real_row_num = row_idx + 1  # Ligne réelle dans Google Sheets
-
-        if len(row) <= max(col_code, col_home, col_away, col_sel, col_odd):
-            continue
-
-        league_code = str(row[col_code]).strip()
-        home_team = str(row[col_home]).strip()
-        away_team = str(row[col_away]).strip()
-        selection = str(row[col_sel]).strip().upper()
-        
-        try:
-            odd_taken = float(str(row[col_odd]).replace(',', '.'))
-        except ValueError:
-            continue
-
-        if league_code in fd_cache:
-            df_fd = fd_cache[league_code]
-            match = df_fd[(df_fd['HomeTeam'] == home_team) & (df_fd['AwayTeam'] == away_team)]
-
-            if not match.empty:
-                m = match.iloc[-1]
-                ps_h = m.get('PSH')
-                ps_d = m.get('PSD')
-                ps_a = m.get('PSA')
-
-                closing_odd = None
-                if selection in ['1', 'H', 'HOME', home_team.upper()]:
-                    closing_odd = ps_h
-                elif selection in ['X', 'D', 'DRAW', 'NUL']:
-                    closing_odd = ps_d
-                elif selection in ['2', 'A', 'AWAY', away_team.upper()]:
-                    closing_odd = ps_a
-
-                if closing_odd and pd.notna(closing_odd) and float(closing_odd) > 0:
-                    clv = (odd_taken / float(closing_odd)) - 1.0
-                    # Colonne H = Colonne 8
-                    updates.append({
-                        'range': f'H{real_row_num}',
-                        'values': [[round(clv, 4)]]
-                    })
-                    updated_count += 1
-
-    if updates:
-        worksheet.batch_update(updates)
-
-    return updated_count, None
-
-# ==========================================
-# 3. LOGIQUE MATHÉMATIQUE (DIXON-COLES & NBINOM)
+# 2. LOGIQUE MATHÉMATIQUE (DIXON-COLES & NBINOM)
 # ==========================================
 def time_weights(dates, halflife_days):
     days_ago = (dates.max() - dates).dt.days.values
@@ -176,16 +54,22 @@ def dixon_coles_adjustment(home_goals, away_goals, lam_home, lam_away, rho):
         return 1 - rho
     return 1.0
 
+# --- NOUVELLE FONCTION POUR LA BINOMIALE NÉGATIVE ---
 def proba_tirs_nbinom(mu, var, ligne_bookmaker):
-    """Calcule les probabilités statistiques avec la Loi Binomiale Négative si surdispersion."""
+    """Calcule les probas statistiques avec la Loi Binomiale Négative si surdispersion"""
     seuil = int(np.floor(ligne_bookmaker))
+    
+    # Sécurité : S'il n'y a pas de surdispersion, on repasse sur Poisson
     if var <= mu or math.isnan(var) or var == 0:
         p_under = poisson.cdf(seuil, mu)
     else:
+        # Conversion moyenne/variance vers les paramètres n et p de scipy.stats.nbinom
         p = mu / var
         n = (mu**2) / (var - mu)
         p_under = nbinom.cdf(seuil, n, p)
+        
     return p_under, 1.0 - p_under
+# ----------------------------------------------------
 
 class DixonColesModel:
     def __init__(self):
@@ -224,6 +108,9 @@ class DixonColesModel:
         constraints = [{"type": "eq", "fun": lambda x: np.sum(x[:n])}]
         result = minimize(neg_log_likelihood, x0, method="SLSQP", constraints=constraints, options={"maxiter": 200})
         
+        if not result.success:
+            st.warning(f"Attention : Le modèle a eu du mal à converger pour ce championnat. Les résultats peuvent être moins précis.")
+            
         attack, defense, rho, home_adv = unpack(result.x)
         self.params = {t: {"attack": attack[i], "defense": defense[i]} for i, t in enumerate(self.teams)}
         self.rho = rho
@@ -251,6 +138,7 @@ class DixonColesModel:
         M, lam_h, lam_a = self.score_matrix(home_team, away_team, max_goals)
         goals = np.arange(max_goals+1)
         
+        # Probabilités 1X2
         h_prob = np.tril(M, -1).sum()
         d_prob = np.trace(M)
         a_prob = np.triu(M, 1).sum()
@@ -270,7 +158,7 @@ class DixonColesModel:
         }
 
 # ==========================================
-# 4. GESTION DES DONNÉES HISTORIQUES
+# 3. GESTION DES DONNÉES
 # ==========================================
 @dataclass
 class ValueBetResult:
@@ -281,31 +169,79 @@ class ValueBetResult:
     edge: float
     kelly_quart: float
 
-@st.cache_data(show_spinner=False)
+def remove_overround(odds):
+    implied = {k: 1/v for k, v in odds.items()}
+    overround = sum(implied.values())
+    return {k: v/overround for k, v in implied.items()}
+
+@st.cache_data(ttl=3600)
 def load_and_clean_data(league_code):
-    dfs = []
-    for s in SEASONS:
-        url = f"https://www.football-data.co.uk/mmz4281/{s}/{league_code}.csv"
+  dfs = []
+  # Simulation d'un navigateur contournant le challenge Cloudflare
+  scraper = cloudscraper.create_scraper()
+
+  for s in SEASONS:
+    url = f"https://www.football-data.co.uk/mmz4281/{s}/{league_code}.csv"
+    try:
+      response = scraper.get(url, timeout=10)
+      if response.status_code == 200:
         try:
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            resp = urllib.request.urlopen(req)
-            df = pd.read_csv(io.StringIO(resp.read().decode('utf-8')))
-            df['Season'] = s
-            dfs.append(df)
-        except Exception:
-            continue
-    if not dfs:
-        return None
-    
-    data = pd.concat(dfs, ignore_index=True)
-    cols_to_clean = ['HomeTeam', 'AwayTeam', 'FTHG', 'FTAG', 'HS', 'AS', 'HST', 'AST']
-    data = data.dropna(subset=[c for c in cols_to_clean if c in data.columns])
-    data['Date'] = pd.to_datetime(data['Date'], dayfirst=True)
-    
-    for col in ['FTHG', 'FTAG', 'HS', 'AS', 'HST', 'AST']:
-        if col in data.columns:
-            data[col] = data[col].astype(int)
-    return data
+          content = response.content.decode("utf-8")
+        except UnicodeDecodeError:
+          content = response.content.decode("latin-1")
+
+        df = pd.read_csv(io.StringIO(content))
+        df["Season"] = s
+        dfs.append(df)
+      else:
+        st.sidebar.warning(f"Saison {s} : Erreur HTTP {response.status_code}")
+    except Exception as e:
+      st.sidebar.warning(f"Saison {s} : {e}")
+
+  if not dfs:
+    return None
+
+  data = pd.concat(dfs, ignore_index=True)
+
+  cols_to_clean = [
+      "HomeTeam",
+      "AwayTeam",
+      "FTHG",
+      "FTAG",
+      "HS",
+      "AS",
+      "HST",
+      "AST",
+  ]
+  existing_cols = [c for c in cols_to_clean if c in data.columns]
+  data = data.dropna(subset=existing_cols)
+
+  data["Date"] = pd.to_datetime(data["Date"], dayfirst=True, errors="coerce")
+  data = data.dropna(subset=["Date"])
+
+  for col in ["FTHG", "FTAG", "HS", "AS", "HST", "AST"]:
+    if col in data.columns:
+      data[col] = data[col].astype(int)
+
+  return data
+
+def load_fixtures():
+  """Récupère le calendrier des prochains matchs depuis Football-Data"""
+  scraper = cloudscraper.create_scraper()
+  url = "https://www.football-data.co.uk/fixtures.csv"
+  try:
+    response = scraper.get(url, timeout=10)
+    if response.status_code == 200:
+      try:
+        content = response.content.decode("utf-8")
+      except UnicodeDecodeError:
+        content = response.content.decode("latin-1")
+      df_fix = pd.read_csv(io.StringIO(content))
+      return df_fix
+  except Exception:
+    pass
+  return None
+
 
 @st.cache_resource(show_spinner=False)
 def train_all_models(df):
@@ -315,59 +251,58 @@ def train_all_models(df):
     return {"goals": goal_model, "shots": shot_model, "sot": sot_model}
 
 # ==========================================
-# 5. INTERFACE STREAMLIT & BARRE LATÉRALE
+# 4. INTERFACE STREAMLIT & FILTRES
 # ==========================================
 st.sidebar.header("🎯 Mode d'Analyse")
 match_mode = st.sidebar.radio("Sélectionnez le contexte", ["Avant-match (Statique)", "En direct (Live)"])
 
-st.sidebar.divider()
-st.sidebar.header("📅 Routine du Lundi (CLV Pinnacle)")
-
-if st.sidebar.button("🔄 Mettre à jour CLV (Colonne H)", use_container_width=True):
-    with st.sidebar.spinner("Calcul des CLV via Pinnacle..."):
-        try:
-            count, err = update_clv_in_google_sheet()
-            if err:
-                st.sidebar.error(err)
-            elif count > 0:
-                st.sidebar.success(f"✅ {count} ligne(s) mise(s) à jour en colonne H !")
-            else:
-                st.sidebar.info("Aucune nouvelle cote Pinnacle trouvée à synchroniser.")
-        except Exception as e:
-            st.sidebar.error(f"Erreur de connexion : {e}")
+st.sidebar.header("📋 Catégories à Analyser")
+cat_buts_main=st.sidebar.checkbox("⚽ Marchés Buts Principaux", value=True)
+cat_buts_team=st.sidebar.checkbox("🥅 Buts par Équipe", value=True)
+cat_shots=st.sidebar.checkbox("📊 Tirs & Tirs Cadrés", value=True)
 
 st.sidebar.divider()
-st.sidebar.header("⚙️ Stratégie de Paris")
-strategie = st.sidebar.selectbox(
-    "Filtre de cotes",
-    [
-        "Afficher Tout (Aucun filtre)",
-        "Volume Faible (Cotes 1.50 - 1.85)",
-        "Volume Moyen (Cotes 1.70 - 2.10)",
-        "Volume Élevé (Cotes 1.85 - 2.30)",
-        "Volume Massif (Cotes > 2.00)"
-    ]
-)
 
-if strategie == "Volume Faible (Cotes 1.50 - 1.85)":
-    cote_min, cote_max = 1.50, 1.85
-elif strategie == "Volume Moyen (Cotes 1.70 - 2.10)":
-    cote_min, cote_max = 1.70, 2.10
-elif strategie == "Volume Élevé (Cotes 1.85 - 2.30)":
-    cote_min, cote_max = 1.85, 2.30
-elif strategie == "Volume Massif (Cotes > 2.00)":
-    cote_min, cote_max = 2.00, 100.00
-else:
-    cote_min, cote_max = 1.01, 100.00
 
-# ==========================================
-# 6. SCANNER PRINCIPAL
-# ==========================================
+# --- 2. CARTES MÉTRIQUES HEBDOMADAIRES (PLAGÉES JUSTE APRÈS) ---
+st.sidebar.subheader("📊 Performance Hebdo (7j)")
+
+# Données (exemples à relier à tes données réelles/Google Sheets)
+total_vbs = 24
+avg_edge = 6.8
+avg_odds = 1.88
+expected_roi = 8.4
+top_league = "Premier League"
+pct_buts = 0.60
+pct_tirs = 0.40
+
+# Grille 2x2
+kpi_col1, kpi_col2 = st.sidebar.columns(2)
+with kpi_col1:
+  st.metric(label="Value Bets", value=f"{total_vbs}", delta="+5 vs S-1")
+  st.metric(label="Cote Moyenne", value=f"{avg_odds:.2f}")
+
+with kpi_col2:
+  st.metric(label="Edge Moyen", value=f"+{avg_edge:.1f}%")
+  st.metric(label="ROI Théorique", value=f"+{expected_roi:.1f}%")
+
+# Top Ligue & Répartition
+st.sidebar.metric(label="🏆 Top Ligue (Edge)", value=top_league)
+
+st.sidebar.markdown("**🎯 Répartition Marchés**")
+st.sidebar.caption(f"{pct_buts:.0%} Buts  |  {pct_tirs:.0%} Tirs")
+st.sidebar.progress(pct_buts)
+
+st.sidebar.divider()
+
+
+cote_min, cote_max = 1.50, 2.3
+
 st.title("🏆 Scanner de Value Bets Pro (Buts & Tirs)")
 
 league_key = st.selectbox("1️⃣ Choisis un championnat", options=list(LEAGUES.keys()), format_func=lambda x: LEAGUES[x]["country"])
 
-with st.spinner("Calcul et calibration des modèles..."):
+with st.spinner(f"Calcul et calibration des modèles..."):
     df = load_and_clean_data(LEAGUES[league_key]["fd_code"])
     if df is not None:
         models = train_all_models(df)
@@ -377,12 +312,69 @@ with st.spinner("Calcul et calibration des modèles..."):
         st.error("Impossible de charger les données.")
         st.stop()
 
+# --- CHARGEMENT DU CALENDRIER ET SÉLECTION PAR DATE ET MATCH ---
+df_fixtures = load_fixtures()
+idx_h, idx_a = 0, min(1, len(teams_list) - 1)
+
+if df_fixtures is not None and not df_fixtures.empty:
+  code_fd = LEAGUES[league_key]["fd_code"]
+  league_fixtures = df_fixtures[df_fixtures["Div"] == code_fd].copy()
+
+  if not league_fixtures.empty:
+    # 1. Extrait et trie les dates uniques disponibles pour la ligue
+    available_dates = sorted(
+        league_fixtures["Date"].dropna().unique().tolist()
+    )
+
+    col_d, col_m = st.columns([1, 3])
+
+    with col_d:
+      selected_date = st.selectbox(
+          "📅 1. Sélectionner une date",
+          options=["-- Toutes les dates --"] + available_dates,
+      )
+
+    # Filtrer les rencontres selon la date
+    if selected_date != "-- Toutes les dates --":
+      filtered_fixtures = league_fixtures[
+          league_fixtures["Date"] == selected_date
+      ]
+    else:
+      filtered_fixtures = league_fixtures
+
+    # 2. Générer la liste des matchs avec la date affichée
+    fixture_options = filtered_fixtures.apply(
+        lambda r: f"{r['HomeTeam']} vs {r['AwayTeam']}", axis=1
+    ).tolist()
+
+    with col_m:
+      selected_fixture = st.selectbox(
+          "⚽ 2. Choisir le match",
+          options=["-- Sélectionner un match --"] + fixture_options,
+      )
+
+    if selected_fixture != "-- Sélectionner un match --":
+      # Isoler 'Équipe A vs Équipe B' en ignorant la date entre parenthèses
+      match_str = selected_fixture.rsplit(" (", 1)[0]
+      h_sel, a_sel = match_str.split(" vs ")
+      if h_sel in teams_list:
+        idx_h = teams_list.index(h_sel)
+      if a_sel in teams_list:
+        idx_a = teams_list.index(a_sel)
+
 st.divider()
 
 col1, col2 = st.columns(2)
-with col1: home_team = st.selectbox("🏠 Équipe à Domicile", options=teams_list)
-with col2: away_team = st.selectbox("✈️ Équipe à l'Extérieur", options=teams_list, index=1)
+with col1:
+  home_team = st.selectbox(
+      "🏠 Équipe à Domicile", options=teams_list, index=idx_h
+  )
+with col2:
+  away_team = st.selectbox(
+      "✈️ Équipe à l'Extérieur", options=teams_list, index=idx_a
+  )
 
+# --- BLOC PARAMÈTRES LIVE SI ACTIVÉ ---
 live_minute, live_home_score, live_away_score = 0, 0, 0
 if match_mode == "En direct (Live)":
     st.divider()
@@ -396,207 +388,222 @@ if match_mode == "En direct (Live)":
         live_away_score = st.number_input("Score Extérieur actuel", min_value=0, max_value=10, value=1)
 
 st.divider()
+
 st.subheader("2️⃣ Saisissez les cotes du bookmaker")
 
-with st.expander("⚽ MARCHÉS DES BUTS PRINCIPAUX (1X2, DOUBLE CHANCE, O/U 2.5, BTTS)", expanded=True):
-    st.markdown("### 🏆 Résultat Match (1X2)")
-    c1, c2, c3 = st.columns(3)
-    h_odd = c1.number_input("Cote 1 (Domicile)", value=2.00, step=0.01)
-    d_odd = c2.number_input("Cote X (Nul)", value=3.40, step=0.01)
-    a_odd = c3.number_input("Cote 2 (Extérieur)", value=3.80, step=0.01)
+# Expander 1 : Marchés principaux (s'affiche uniquement si la case est cochée)   
+if cat_buts_main:
+    with st.expander("⚽ MARCHÉS DES BUTS PRINCIPAUX (1X2, DOUBLE CHANCE, O/U 2.5, BTTS)", expanded=True):
+        st.markdown("### 🏆 Résultat Match (1X2)")
+        c1, c2, c3 = st.columns(3)
+        h_odd = c1.number_input("Cote 1 (Domicile)", value=2.00, step=0.01)
+        d_odd = c2.number_input("Cote X (Nul)", value=3.40, step=0.01)
+        a_odd = c3.number_input("Cote 2 (Extérieur)", value=3.80, step=0.01)
 
-    st.markdown("### 🛡️ Double Chance")
-    c1, c2, c3 = st.columns(3)
-    dc_1x = c1.number_input("1X (Dom ou Nul)", value=1.28, step=0.01)
-    dc_12 = c2.number_input("12 (Dom ou Ext)", value=1.30, step=0.01)
-    dc_x2 = c3.number_input("X2 (Nul ou Ext)", value=1.70, step=0.01)
+        st.markdown("### 🛡️ Double Chance")
+        c1, c2, c3 = st.columns(3)
+        dc_1x = c1.number_input("1X (Dom ou Nul)", value=1.28, step=0.01)
+        dc_12 = c2.number_input("12 (Dom ou Ext)", value=1.30, step=0.01)
+        dc_x2 = c3.number_input("X2 (Nul ou Ext)", value=1.70, step=0.01)
 
-    st.markdown("### ⚽ Buts & BTTS")
-    c1, c2, c3, c4 = st.columns(4)
-    ou_over = c1.number_input("Over 2.5 (Buts)", value=1.90, step=0.01)
-    ou_under = c2.number_input("Under 2.5 (Buts)", value=1.90, step=0.01)
-    btts_yes = c3.number_input("BTTS Oui", value=1.85, step=0.01)
-    btts_no = c4.number_input("BTTS Non", value=1.95, step=0.01)
+        st.markdown("### ⚽ Buts & BTTS")
+        c1, c2, c3, c4 = st.columns(4)
+        ou_over = c1.number_input("Over 2.5 (Buts)", value=1.90, step=0.01)
+        ou_under = c2.number_input("Under 2.5 (Buts)", value=1.90, step=0.01)
+        btts_yes = c3.number_input("BTTS Oui", value=1.85, step=0.01)
+        btts_no = c4.number_input("BTTS Non", value=1.95, step=0.01)
 
-with st.expander("0️⃣ BUTS PAR ÉQUIPE (Over / Under 0.5 et 1.5)"):
-    st.markdown(f"**🏠 {home_team} (Domicile)**")
-    c1, c2, c3, c4 = st.columns(4)
-    hg_o05 = c1.number_input("Over 0.5 (Dom)", value=1.15, step=0.01)
-    hg_u05 = c2.number_input("Under 0.5 (Dom)", value=5.00, step=0.01)
-    hg_o15 = c3.number_input("Over 1.5 (Dom)", value=2.10, step=0.01)
-    hg_u15 = c4.number_input("Under 1.5 (Dom)", value=1.70, step=0.01)
+# Expander 2 : Buts individuels par équipe
+if cat_buts_team:
+    with st.expander("🥅 BUTS PAR ÉQUIPE (Over / Under 0.5 et 1.5)"):
+        st.markdown(f"**🏠 {home_team} (Domicile)**")
+        c1, c2, c3, c4 = st.columns(4)
+        hg_o05 = c1.number_input("Over 0.5 (Dom)", value=1.15, step=0.01)
+        hg_u05 = c2.number_input("Under 0.5 (Dom)", value=5.00, step=0.01)
+        hg_o15 = c3.number_input("Over 1.5 (Dom)", value=2.10, step=0.01)
+        hg_u15 = c4.number_input("Under 1.5 (Dom)", value=1.70, step=0.01)
 
-    st.markdown(f"**✈️ {away_team} (Extérieur)**")
-    c1, c2, c3, c4 = st.columns(4)
-    ag_o05 = c1.number_input("Over 0.5 (Ext)", value=1.40, step=0.01)
-    ag_u05 = c2.number_input("Under 0.5 (Ext)", value=2.80, step=0.01)
-    ag_o15 = c3.number_input("Over 1.5 (Ext)", value=3.50, step=0.01)
-    ag_u15 = c4.number_input("Under 1.5 (Ext)", value=1.28, step=0.01)
+        st.markdown(f"**✈️ {away_team} (Extérieur)**")
+        c1, c2, c3, c4 = st.columns(4)
+        ag_o05 = c1.number_input("Over 0.5 (Ext)", value=1.40, step=0.01)
+        ag_u05 = c2.number_input("Under 0.5 (Ext)", value=2.80, step=0.01)
+        ag_o15 = c3.number_input("Over 1.5 (Ext)", value=3.50, step=0.01)
+        ag_u15 = c4.number_input("Under 1.5 (Ext)", value=1.28, step=0.01)
 
-with st.expander("📊 MARCHÉS DES TIRS & TIRS CADRÉS (Lignes ajustables)"):
-    st.markdown("### 🏹 Tirs Totaux (Match)")
-    c1, c2, c3 = st.columns(3)
-    t_shots_line = c1.number_input("Ligne de Tirs Match (ex: 24.5)", value=24.5, step=0.5)
-    t_shots_o = c2.number_input("Cote Over Tirs Match", value=1.85, step=0.01)
-    t_shots_u = c3.number_input("Cote Under Tirs Match", value=1.85, step=0.01)
+# Expander 3 : Tirs et tirs cadrés
+if cat_shots:
+    with st.expander("📊 MARCHÉS DES TIRS & TIRS CADRÉS (Lignes ajustables)"):
+        st.markdown("### 🏹 Tirs Totaux (Match)")
+        c1, c2, c3 = st.columns(3)
+        t_shots_line = c1.number_input("Ligne de Tirs Match (ex: 24.5)", value=24.5, step=0.5)
+        t_shots_o = c2.number_input("Cote Over Tirs Match", value=1.85, step=0.01)
+        t_shots_u = c3.number_input("Cote Under Tirs Match", value=1.85, step=0.01)
 
-    st.markdown(f"### 🏠 Tirs Totaux Individuels : {home_team}")
-    c1, c2, c3 = st.columns(3)
-    h_shots_line = c1.number_input(f"Ligne Tirs Totaux {home_team}", value=13.5, step=0.5)
-    h_shots_o = c2.number_input("Cote Over Tirs Dom", value=1.85, step=0.01)
-    h_shots_u = c3.number_input("Cote Under Tirs Dom", value=1.85, step=0.01)
+        st.markdown(f"### 🏠 Tirs Totaux Individuels : {home_team}")
+        c1, c2, c3 = st.columns(3)
+        h_shots_line = c1.number_input(f"Ligne Tirs Totaux {home_team}", value=13.5, step=0.5)
+        h_shots_o = c2.number_input("Cote Over Tirs Dom", value=1.85, step=0.01)
+        h_shots_u = c3.number_input("Cote Under Tirs Dom", value=1.85, step=0.01)
 
-    st.markdown(f"### ✈️ Tirs Totaux Individuels : {away_team}")
-    c1, c2, c3 = st.columns(3)
-    a_shots_line = c1.number_input(f"Ligne Tirs Totaux {away_team}", value=11.5, step=0.5)
-    a_shots_o = c2.number_input("Cote Over Tirs Ext", value=1.85, step=0.01)
-    a_shots_u = c3.number_input("Cote Under Tirs Ext", value=1.85, step=0.01)
+        st.markdown(f"### ✈️ Tirs Totaux Individuels : {away_team}")
+        c1, c2, c3 = st.columns(3)
+        a_shots_line = c1.number_input(f"Ligne Tirs Totaux {away_team}", value=11.5, step=0.5)
+        a_shots_o = c2.number_input("Cote Over Tirs Ext", value=1.85, step=0.01)
+        a_shots_u = c3.number_input("Cote Under Tirs Ext", value=1.85, step=0.01)
 
-    st.markdown("### 🎯 Tirs Cadrés Totaux (Match)")
-    c1, c2, c3 = st.columns(3)
-    t_sot_line = c1.number_input("Ligne Tirs Cadrés Match (ex: 8.5)", value=8.5, step=0.5)
-    t_sot_o = c2.number_input("Cote Over SOT Match", value=1.85, step=0.01)
-    t_sot_u = c3.number_input("Cote Under SOT Match", value=1.85, step=0.01)
+        st.markdown("### 🎯 Tirs Cadrés Totaux (Match)")
+        c1, c2, c3 = st.columns(3)
+        t_sot_line = c1.number_input("Ligne Tirs Cadrés Match (ex: 8.5)", value=8.5, step=0.5)
+        t_sot_o = c2.number_input("Cote Over SOT Match", value=1.85, step=0.01)
+        t_sot_u = c3.number_input("Cote Under SOT Match", value=1.85, step=0.01)
 
-    st.markdown(f"### 🏠 Tirs Cadrés Individuels : {home_team}")
-    c1, c2, c3 = st.columns(3)
-    h_sot_line = c1.number_input(f"Ligne SOT {home_team}", value=4.5, step=0.5)
-    h_sot_o = c2.number_input("Cote Over SOT Dom", value=1.85, step=0.01)
-    h_sot_u = c3.number_input("Cote Under SOT Dom", value=1.85, step=0.01)
+        st.markdown(f"### 🏠 Tirs Cadrés Individuels : {home_team}")
+        c1, c2, c3 = st.columns(3)
+        h_sot_line = c1.number_input(f"Ligne SOT {home_team}", value=4.5, step=0.5)
+        h_sot_o = c2.number_input("Cote Over SOT Dom", value=1.85, step=0.01)
+        h_sot_u = c3.number_input("Cote Under SOT Dom", value=1.85, step=0.01)
 
-    st.markdown(f"### ✈️ Tirs Cadrés Individuels : {away_team}")
-    c1, c2, c3 = st.columns(3)
-    a_sot_line = c1.number_input(f"Ligne SOT {away_team}", value=3.5, step=0.5)
-    a_sot_o = c2.number_input("Cote Over SOT Ext", value=1.85, step=0.01)
-    a_sot_u = c3.number_input("Cote Under SOT Ext", value=1.85, step=0.01)
+        st.markdown(f"### ✈️ Tirs Cadrés Individuels : {away_team}")
+        c1, c2, c3 = st.columns(3)
+        a_sot_line = c1.number_input(f"Ligne SOT {away_team}", value=3.5, step=0.5)
+        a_sot_o = c2.number_input("Cote Over SOT Ext", value=1.85, step=0.01)
+        a_sot_u = c3.number_input("Cote Under SOT Ext", value=1.85, step=0.01)
 
 st.divider()
 
-min_edge = st.slider("Seuil d'Edge minimum (%)", min_value=0.0, max_value=15.0, value=3.0, step=0.5) / 100
+min_edge = st.slider("Seuil d'Edge minimum (%)", min_value=0.0, max_value=15.0, value=5.0, step=0.5) / 100
 
 if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_width=True):
     if home_team == away_team:
         st.error("Veuillez choisir deux équipes différentes.")
+    elif not (cat_buts_main or cat_buts_team or cat_shots):
+        st.warning("Veuillez cocher au moins une catégorie à analyser dans le menu de gauche.")
     else:
-        # 1. Calculs buts
-        base_goals_preds = models["goals"].predict_goal_markets(home_team, away_team)
-        lam_h_base = base_goals_preds["expected_goals"]["home"]
-        lam_a_base = base_goals_preds["expected_goals"]["away"]
+        preds_all = {}
+        market_odds = {}
 
-        if match_mode == "En direct (Live)":
-            ratio_temps = (90 - live_minute) / 90.0
-            lam_h = lam_h_base * ratio_temps
-            lam_a = lam_a_base * ratio_temps
-            
-            score_total_actuel = live_home_score + live_away_score
-            if score_total_actuel == 1:
-                lam_h *= 0.92
-                lam_a *= 0.92
-            elif score_total_actuel >= 3:
-                lam_h *= 1.08
-                lam_a *= 1.08
+        # --- 1. CALCULS DES BUTS (Si Marchés Principaux OU Buts par Équipe) ---
+        if cat_buts_main or cat_buts_team:
+            base_goals_preds = models["goals"].predict_goal_markets(home_team, away_team)
+            lam_h_base = base_goals_preds["expected_goals"]["home"]
+            lam_a_base = base_goals_preds["expected_goals"]["away"]
+
+            if match_mode == "En direct (Live)":
+                ratio_temps = (90 - live_minute) / 90.0
+                lam_h = lam_h_base * ratio_temps
+                lam_a = lam_a_base * ratio_temps
                 
-            max_goals = 10
-            M = np.zeros((max_goals+1, max_goals+1))
-            for i in range(max_goals+1):
-                for j in range(max_goals+1):
-                    p = poisson.pmf(i, lam_h) * poisson.pmf(j, lam_a) * dixon_coles_adjustment(i, j, lam_h, lam_a, models["goals"].rho)
-                    M[i, j] = p
-            M = np.clip(M, 0, None)
-            M = M / M.sum()
-            
-            h_prob = np.tril(M, -1).sum()
-            d_prob = np.trace(M)
-            a_prob = np.triu(M, 1).sum()
-            
-            buts_manquants = max(0, 3 - score_total_actuel)
-            if buts_manquants == 0:
-                prob_over_25 = 1.0
+                score_total_actuel = live_home_score + live_away_score
+                if score_total_actuel == 1:
+                    lam_h *= 0.92
+                    lam_a *= 0.92
+                elif score_total_actuel >= 3:
+                    lam_h *= 1.08
+                    lam_a *= 1.08
+                    
+                max_goals = 10
+                M = np.zeros((max_goals+1, max_goals+1))
+                for i in range(max_goals+1):
+                    for j in range(max_goals+1):
+                        p = poisson.pmf(i, lam_h) * poisson.pmf(j, lam_a) * dixon_coles_adjustment(i, j, lam_h, lam_a, models["goals"].rho)
+                        M[i, j] = p
+                M = np.clip(M, 0, None)
+                M = M / M.sum()
+                goals = np.arange(max_goals+1)
+                
+                h_prob = np.tril(M, -1).sum()
+                d_prob = np.trace(M)
+                a_prob = np.triu(M, 1).sum()
+                
+                buts_manquants_over25 = max(0, 3 - score_total_actuel)
+                if buts_manquants_over25 == 0:
+                    prob_over_25, prob_under_25 = 1.0, 0.0
+                else:
+                    prob_over_25 = sum((math.exp(-(lam_h + lam_a)) * ((lam_h + lam_a)**k)) / math.factorial(k) for k in range(buts_manquants_over25, 10))
+                    prob_under_25 = 1.0 - prob_over_25
+
+                preds_goals = {
+                    "1X2": {"H": h_prob, "D": d_prob, "A": a_prob},
+                    "double_chance": {"1X": h_prob + d_prob, "12": h_prob + a_prob, "X2": d_prob + a_prob},
+                    "over_under_2_5": {"over": prob_over_25, "under": prob_under_25},
+                    "btts": {"yes": M[1:, 1:].sum(), "no": 1 - M[1:, 1:].sum()},
+                    "home_goals": {"over_0_5": M[1:, :].sum(), "under_0_5": M[0, :].sum(), "over_1_5": M[2:, :].sum(), "under_1_5": M[:2, :].sum()},
+                    "away_goals": {"over_0_5": M[:, 1:].sum(), "under_0_5": M[:, 0].sum(), "over_1_5": M[:, 2:].sum(), "under_1_5": M[:, :2].sum()},
+                    "expected_goals": {"home": lam_h, "away": lam_a},
+                }
             else:
-                prob_over_25 = sum((math.exp(-(lam_h + lam_a)) * ((lam_h + lam_a)**k)) / math.factorial(k) for k in range(buts_manquants, 10))
-            prob_under_25 = 1.0 - prob_over_25
+                preds_goals = base_goals_preds
 
-            preds_goals = {
-                "1X2": {"H": h_prob, "D": d_prob, "A": a_prob},
-                "double_chance": {"1X": h_prob + d_prob, "12": h_prob + a_prob, "X2": d_prob + a_prob},
-                "over_under_2_5": {"over": prob_over_25, "under": prob_under_25},
-                "btts": {"yes": M[1:, 1:].sum(), "no": 1 - M[1:, 1:].sum()},
-                "home_goals": {"over_0_5": M[1:, :].sum(), "under_0_5": M[0, :].sum(), "over_1_5": M[2:, :].sum(), "under_1_5": M[:2, :].sum()},
-                "away_goals": {"over_0_5": M[:, 1:].sum(), "under_0_5": M[:, 0].sum(), "over_1_5": M[:, 2:].sum(), "under_1_5": M[:, :2].sum()},
-                "expected_goals": {"home": lam_h, "away": lam_a},
-            }
-        else:
-            preds_goals = base_goals_preds
-            lam_h, lam_a = lam_h_base, lam_a_base
+            # Injection dans les dictionnaires selon les filtres
+            if cat_buts_main:
+                preds_all.update({
+                    "1X2": preds_goals["1X2"],
+                    "double_chance": preds_goals["double_chance"],
+                    "over_under_2_5": preds_goals["over_under_2_5"],
+                    "btts": preds_goals["btts"]
+                })
+                market_odds.update({
+                    "1X2": {"H": h_odd, "D": d_odd, "A": a_odd},
+                    "double_chance": {"1X": dc_1x, "12": dc_12, "X2": dc_x2},
+                    "over_under_2_5": {"over": ou_over, "under": ou_under},
+                    "btts": {"yes": btts_yes, "no": btts_no}
+                })
 
-        # 2. Tirs (Binomiale Négative)
-        lam_h_shots, lam_a_shots = models["shots"].get_lambdas(home_team, away_team)
-        h_shots_data = df[df['HomeTeam'] == home_team]['HS']
-        a_shots_data = df[df['AwayTeam'] == away_team]['AS']
-        var_h_shots = np.var(h_shots_data, ddof=1) if len(h_shots_data) > 1 else lam_h_shots
-        var_a_shots = np.var(a_shots_data, ddof=1) if len(a_shots_data) > 1 else lam_a_shots
+            if cat_buts_team:
+                preds_all.update({
+                    "home_goals": preds_goals["home_goals"],
+                    "away_goals": preds_goals["away_goals"]
+                })
+                market_odds.update({
+                    "home_goals": {"over_0_5": hg_o05, "under_0_5": hg_u05, "over_1_5": hg_o15, "under_1_5": hg_u15},
+                    "away_goals": {"over_0_5": ag_o05, "under_0_5": ag_u05, "over_1_5": ag_o15, "under_1_5": ag_u15}
+                })
 
-        if match_mode == "En direct (Live)":
-            ratio = (90 - live_minute) / 90.0
-            lam_h_shots *= ratio
-            lam_a_shots *= ratio
-            var_h_shots *= ratio
-            var_a_shots *= ratio
+        # --- 2. CALCULS DES TIRS & SOT (Si catégorie Tirs activée) ---
+        if cat_shots:
+            lam_h_shots, lam_a_shots = models["shots"].get_lambdas(home_team, away_team)
+            h_shots_data = df[df['HomeTeam'] == home_team]['HS']
+            a_shots_data = df[df['AwayTeam'] == away_team]['AS']
+            var_h_shots = np.var(h_shots_data, ddof=1) if len(h_shots_data) > 1 else lam_h_shots
+            var_a_shots = np.var(a_shots_data, ddof=1) if len(a_shots_data) > 1 else lam_a_shots
 
-        prob_shots_under, prob_shots_over = proba_tirs_nbinom(lam_h_shots + lam_a_shots, var_h_shots + var_a_shots, t_shots_line)
-        prob_h_shots_under, prob_h_shots_over = proba_tirs_nbinom(lam_h_shots, var_h_shots, h_shots_line)
-        prob_a_shots_under, prob_a_shots_over = proba_tirs_nbinom(lam_a_shots, var_a_shots, a_shots_line)
+            lam_h_sot, lam_a_sot = models["sot"].get_lambdas(home_team, away_team)
+            h_sot_data = df[df['HomeTeam'] == home_team]['HST']
+            a_sot_data = df[df['AwayTeam'] == away_team]['AST']
+            var_h_sot = np.var(h_sot_data, ddof=1) if len(h_sot_data) > 1 else lam_h_sot
+            var_a_sot = np.var(a_sot_data, ddof=1) if len(a_sot_data) > 1 else lam_a_sot
 
-        # 3. Tirs cadrés (Binomiale Négative)
-        lam_h_sot, lam_a_sot = models["sot"].get_lambdas(home_team, away_team)
-        h_sot_data = df[df['HomeTeam'] == home_team]['HST']
-        a_sot_data = df[df['AwayTeam'] == away_team]['AST']
-        var_h_sot = np.var(h_sot_data, ddof=1) if len(h_sot_data) > 1 else lam_h_sot
-        var_a_sot = np.var(a_sot_data, ddof=1) if len(a_sot_data) > 1 else lam_a_sot
+            if match_mode == "En direct (Live)":
+                ratio = (90 - live_minute) / 90.0
+                lam_h_shots *= ratio; lam_a_shots *= ratio; var_h_shots *= ratio; var_a_shots *= ratio
+                lam_h_sot *= ratio; lam_a_sot *= ratio; var_h_sot *= ratio; var_a_sot *= ratio
 
-        if match_mode == "En direct (Live)":
-            ratio = (90 - live_minute) / 90.0
-            lam_h_sot *= ratio
-            lam_a_sot *= ratio
-            var_h_sot *= ratio
-            var_a_sot *= ratio
+            prob_shots_under, prob_shots_over = proba_tirs_nbinom(lam_h_shots + lam_a_shots, var_h_shots + var_a_shots, t_shots_line)
+            prob_h_shots_under, prob_h_shots_over = proba_tirs_nbinom(lam_h_shots, var_h_shots, h_shots_line)
+            prob_a_shots_under, prob_a_shots_over = proba_tirs_nbinom(lam_a_shots, var_a_shots, a_shots_line)
 
-        prob_sot_under, prob_sot_over = proba_tirs_nbinom(lam_h_sot + lam_a_sot, var_h_sot + var_a_sot, t_sot_line)
-        prob_h_sot_under, prob_h_sot_over = proba_tirs_nbinom(lam_h_sot, var_h_sot, h_sot_line)
-        prob_a_sot_under, prob_a_sot_over = proba_tirs_nbinom(lam_a_sot, var_a_sot, a_sot_line)
+            prob_sot_under, prob_sot_over = proba_tirs_nbinom(lam_h_sot + lam_a_sot, var_h_sot + var_a_sot, t_sot_line)
+            prob_h_sot_under, prob_h_sot_over = proba_tirs_nbinom(lam_h_sot, var_h_sot, h_sot_line)
+            prob_a_sot_under, prob_a_sot_over = proba_tirs_nbinom(lam_a_sot, var_a_sot, a_sot_line)
 
-        # 4. Assemblage
-        preds_all = {
-            "1X2": preds_goals["1X2"],
-            "double_chance": preds_goals["double_chance"],
-            "over_under_2_5": preds_goals["over_under_2_5"],
-            "btts": preds_goals["btts"],
-            "home_goals": preds_goals["home_goals"],      
-            "away_goals": preds_goals["away_goals"],      
-            f"tirs_match_{t_shots_line}": {"over": prob_shots_over, "under": prob_shots_under},
-            f"tirs_domicile_{h_shots_line}": {"over": prob_h_shots_over, "under": prob_h_shots_under},   
-            f"tirs_exterieur_{a_shots_line}": {"over": prob_a_shots_over, "under": prob_a_shots_under}, 
-            f"sot_match_{t_sot_line}": {"over": prob_sot_over, "under": prob_sot_under},
-            f"sot_domicile_{h_sot_line}": {"over": prob_h_sot_over, "under": prob_h_sot_under},
-            f"sot_exterieur_{a_sot_line}": {"over": prob_a_sot_over, "under": prob_a_sot_under}
-        }
+            preds_all.update({
+                f"tirs_match_{t_shots_line}": {"over": prob_shots_over, "under": prob_shots_under},
+                f"tirs_domicile_{h_shots_line}": {"over": prob_h_shots_over, "under": prob_h_shots_under},
+                f"tirs_exterieur_{a_shots_line}": {"over": prob_a_shots_over, "under": prob_a_shots_under},
+                f"sot_match_{t_sot_line}": {"over": prob_sot_over, "under": prob_sot_under},
+                f"sot_domicile_{h_sot_line}": {"over": prob_h_sot_over, "under": prob_h_sot_under},
+                f"sot_exterieur_{a_sot_line}": {"over": prob_a_sot_over, "under": prob_a_sot_under}
+            })
+            market_odds.update({
+                f"tirs_match_{t_shots_line}": {"over": t_shots_o, "under": t_shots_u},
+                f"tirs_domicile_{h_shots_line}": {"over": h_shots_o, "under": h_shots_u},
+                f"tirs_exterieur_{a_shots_line}": {"over": a_shots_o, "under": a_shots_u},
+                f"sot_match_{t_sot_line}": {"over": t_sot_o, "under": t_sot_u},
+                f"sot_domicile_{h_sot_line}": {"over": h_sot_o, "under": h_sot_u},
+                f"sot_exterieur_{a_sot_line}": {"over": a_sot_o, "under": a_sot_u}
+            })
 
-        market_odds = {
-            "1X2": {"H": h_odd, "D": d_odd, "A": a_odd},
-            "double_chance": {"1X": dc_1x, "12": dc_12, "X2": dc_x2},
-            "over_under_2_5": {"over": ou_over, "under": ou_under},
-            "btts": {"yes": btts_yes, "no": btts_no},
-            "home_goals": {"over_0_5": hg_o05, "under_0_5": hg_u05, "over_1_5": hg_o15, "under_1_5": hg_u15}, 
-            "away_goals": {"over_0_5": ag_o05, "under_0_5": ag_u05, "over_1_5": ag_o15, "under_1_5": ag_u15}, 
-            f"tirs_match_{t_shots_line}": {"over": t_shots_o, "under": t_shots_u},
-            f"tirs_domicile_{h_shots_line}": {"over": h_shots_o, "under": h_shots_u},   
-            f"tirs_exterieur_{a_shots_line}": {"over": a_shots_o, "under": a_shots_u}, 
-            f"sot_match_{t_sot_line}": {"over": t_sot_o, "under": t_sot_u},
-            f"sot_domicile_{h_sot_line}": {"over": h_sot_o, "under": h_sot_u},
-            f"sot_exterieur_{a_sot_line}": {"over": a_sot_o, "under": a_sot_u}
-        }
-
-        # 5. Détection de Value
+        # --- 3. MOTEUR DU SCANNER DE VALUE ---
         results = []
         for market, odds in market_odds.items():
             for sel, odd in odds.items():
@@ -610,22 +617,57 @@ if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_wi
         
         results.sort(key=lambda x: x.edge, reverse=True)
 
-        # 6. Affichage
+        # --- 4. AFFICHAGE DES RÉSULTATS DANS L'APPLICATION ---
         st.header(f"📊 Rapport : {home_team} vs {away_team}")
         if match_mode == "En direct (Live)":
             st.caption(f"⚡ Analyse Live à la {live_minute}e minute | Score actuel : {live_home_score} - {live_away_score}")
-        
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("xG Dom", f"{preds_goals['expected_goals']['home']:.2f}")
-        c2.metric("xG Ext", f"{preds_goals['expected_goals']['away']:.2f}")
-        c3.metric("Tirs Attendus Dom", f"{lam_h_shots:.1f}")
-        c4.metric("Tirs Attendus Ext", f"{lam_a_shots:.1f}")
 
-        st.subheader(f"💸 Value Bets Détectés (Stratégie : {strategie.split('(')[0].strip()})")
+        st.subheader(f"💸 Value Bets Détectés (Stratégie : côtes entre 1,5 et 2,3)")
         if not results:
-            st.info("Aucun Value Bet détecté pour ce match avec vos critères actuels.")
+            st.info("Aucun Value Bet détecté pour ce match avec vos critères actuels (Edge ou Cotes hors limites).")
         else:
+            # Nuage de points Plotly
+            df_res = pd.DataFrame([
+                {
+                    "Marché": vb.market.upper(),
+                    "Sélection": vb.selection.upper(),
+                    "Cote": vb.bookmaker_odds,
+                    "Edge (%)": round(vb.edge * 100, 2),
+                    "Probabilité (%)": round(vb.model_prob * 100, 1)
+                }
+                for vb in results
+            ])
+
+            fig = px.scatter(
+                df_res,
+                x="Cote",
+                y="Edge (%)",
+                color="Edge (%)",
+                hover_data=["Marché", "Sélection", "Probabilité (%)"],
+                title="📌 Répartition Cote vs Edge des opportunités détectées",
+                labels={"Cote": "Cote Bookmaker", "Edge (%)": "Edge / Value (%)"},
+                color_continuous_scale="RdYlGn"
+            )
+            fig.add_hline(y=min_edge * 100, line_dash="dash", line_color="red", annotation_text=f"Seuil Min ({min_edge*100:.1f}%)")
+            st.plotly_chart(fig, use_container_width=True)
+            st.divider()
+
             for vb in results:
-                st.success(f"🎯 **[{vb.market.upper()}] Option : {vb.selection.upper()}**")
+                display_market = vb.market.upper()
+                display_selection = vb.selection.upper()
+                
+                if vb.market == "double_chance":
+                    display_market = "DOUBLE CHANCE"
+                    if vb.selection == "1X": display_selection = f"1X ({home_team} OU NUL)"
+                    elif vb.selection == "12": display_selection = f"12 ({home_team} OU {away_team})"
+                    elif vb.selection == "X2": display_selection = f"X2 (NUL OU {away_team})"
+                elif vb.market == "home_goals": display_market = f"BUTS {home_team.upper()}"
+                elif vb.market == "away_goals": display_market = f"BUTS {away_team.upper()}"
+                elif vb.market.startswith("tirs_domicile_"): display_market = f"TIRS {home_team.upper()}"
+                elif vb.market.startswith("tirs_exterieur_"): display_market = f"TIRS {away_team.upper()}"
+                elif vb.market.startswith("sot_domicile_"): display_market = f"SOT {home_team.upper()}"
+                elif vb.market.startswith("sot_exterieur_"): display_market = f"SOT {away_team.upper()}"
+
+                st.success(f"🎯 **[{display_market}] Option : {display_selection}**")
                 st.write(f"• Probabilité estimée : **{vb.model_prob:.1%}** | Cote saisie : **{vb.bookmaker_odds}**")
                 st.write(f"• **EDGE : +{vb.edge:.1%}** | Mise Kelly (1/4) conseillée : **{vb.kelly_quart:.1%}**")
