@@ -263,18 +263,7 @@ cat_buts_team=st.sidebar.checkbox("🥅 Buts par Équipe", value=True)
 cat_shots=st.sidebar.checkbox("📊 Tirs & Tirs Cadrés", value=True)
 st.sidebar.markdown("Sélectionnez la tranche de cotes à cibler selon votre volume hebdomadaire.")
 
-strategie = st.sidebar.selectbox(
-    "Filtre de cotes",
-    [
-        "Afficher Tout (Aucun filtre)",
-        "Volume cible (Cotes 1.50 - 2.3)",
-    ]
-)
-
-if strategie == "Volume cible (Cotes 1.50 - 2.3)":
-    cote_min, cote_max = 1.50, 2.3
-else:
-    cote_min, cote_max = 1.01, 100.00
+cote_min, cote_max = 1.50, 2.3
 
 st.title("🏆 Scanner de Value Bets Pro (Buts & Tirs)")
 
