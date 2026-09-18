@@ -5,3 +5,5 @@ pandas
 numpy
 scipy
 requests
+cloudscraper
+plotsly.express
