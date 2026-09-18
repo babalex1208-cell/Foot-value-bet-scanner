@@ -11,6 +11,124 @@ from scipy.optimize import minimize
 from scipy.stats import poisson, nbinom # NOUVEAU: Import de nbinom
 from dataclasses import dataclass
 import plotly.express as px
+from datetime import datetime, timedelta
+
+# =========================================================
+# 2. FONCTIONS DE CONNEXION ET FORMATAGE GOOGLE SHEETS
+# =========================================================
+
+
+def get_gspread_client():
+  """Connexion à l'API Google Sheets via st.secrets."""
+  creds_dict = dict(st.secrets["gcp_service_account"])
+  if "private_key" in creds_dict:
+    creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+  return gspread.service_account_from_dict(creds_dict)
+
+
+def format_bet_details(market, selection, home_team, away_team):
+  """Formate le nom du pari (Col F) et le cut tirs (Col G)."""
+  # ... (code de formatage)
+  return bet_name, cut_str
+
+
+def build_sheets_row(
+    vb, match_date, match_mode, timing_paris, league_name, home_team, away_team
+):
+  """Construit la liste des 16 colonnes (A à P) pour Google Sheets."""
+  # ... (code de construction de la ligne)
+  return [
+      match_date,
+      "Live" if match_mode == "En direct (Live)" else "Avant",
+      timing_paris,
+      league_name,
+      f"{home_team} / {away_team}",
+      bet_name,
+      cut_str,
+      str(vb.bookmaker_odds).replace(".", ","),
+      "",
+      "",
+      f"{vb.edge * 100:.1f} %".replace(".", ","),
+      f"{vb.kelly_quart * 100:.1f} %".replace(".", ","),
+      "",
+      "",
+      "",
+      "",
+  ]
+
+
+# ⬇️ PLACE TA FONCTION D'EXPORT GLOBAL ICI ⬇️
+def export_all_value_bets_to_sheet(
+    sheet_name,
+    results,
+    match_date,
+    match_mode,
+    timing_paris,
+    league_name,
+    home_team,
+    away_team,
+):
+  """Exporte la liste complète des Value Bets détectés en une seule requête."""
+  try:
+    gc = get_gspread_client()
+    sh = gc.open(sheet_name).sheet1
+
+    rows_data = [
+        build_sheets_row(
+            vb,
+            match_date,
+            match_mode,
+            timing_paris,
+            league_name,
+            home_team,
+            away_team,
+        )
+        for vb in results
+    ]
+
+    sh.append_rows(rows_data, value_input_option="USER_ENTERED")
+    return True
+  except Exception as e:
+    st.error(f"Erreur lors de l'exportation globale vers Google Sheets : {e}")
+    return False
+
+
+# ⬇️ ET TA FONCTION D'EXPORT INDIVIDUEL JUSTE EN DESSOUS ⬇️
+def export_value_bet_to_sheet(
+    sheet_name,
+    vb,
+    match_date,
+    match_mode,
+    timing_paris,
+    league_name,
+    home_team,
+    away_team,
+):
+  """Exporte un seul Value Bet vers Google Sheets."""
+  try:
+    gc = get_gspread_client()
+    sh = gc.open(sheet_name).sheet1
+
+    row_data = build_sheets_row(
+        vb,
+        match_date,
+        match_mode,
+        timing_paris,
+        league_name,
+        home_team,
+        away_team,
+    )
+    sh.append_row(row_data, value_input_option="USER_ENTERED")
+    return True
+  except Exception as e:
+    st.error(f"Erreur lors de l'exportation vers Google Sheets : {e}")
+    return False
+
+
+# =========================================================
+# 3. CODE DE L'APPLICATION STREAMLIT (Sidebar & Page Principale)
+# =========================================================
+# À partir d'ici commence ton interface (st.sidebar..., st.columns..., etc.)
 
 # ==========================================
 # 1. CONFIGURATION
