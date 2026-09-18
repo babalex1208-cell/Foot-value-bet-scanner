@@ -288,7 +288,6 @@ with st.spinner(f"Calcul et calibration des modèles..."):
         st.stop()
 
 # NOUVEAU : CHARGEMENT DU CALENDRIER ET SÉLECTION DU MATCH
-ok
 df_fixtures = load_fixtures()
 idx_h, idx_a = 0, min(1, len(teams_list) - 1)
 
