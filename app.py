@@ -287,33 +287,67 @@ with st.spinner(f"Calcul et calibration des modèles..."):
         st.error("Impossible de charger les données.")
         st.stop()
 
-# NOUVEAU : CHARGEMENT DU CALENDRIER ET SÉLECTION DU MATCH
+# --- CHARGEMENT DU CALENDRIER ET SÉLECTION PAR DATE ET MATCH ---
 df_fixtures = load_fixtures()
 idx_h, idx_a = 0, min(1, len(teams_list) - 1)
 
 if df_fixtures is not None and not df_fixtures.empty:
-    code_fd = LEAGUES[league_key]["fd_code"]
-    league_fixtures = df_fixtures[df_fixtures["Div"] == code_fd]
-    
-    if not league_fixtures.empty:
-        fixture_options = league_fixtures.apply(lambda r: f"{r['HomeTeam']} vs {r['AwayTeam']}", axis=1).tolist()
-        selected_fixture = st.selectbox(
-            "📅 Choisir une rencontre à venir (ou laisser en saisie libre)",
-            options=["-- Sélectionner un match --"] + fixture_options
-        )
-        
-        if selected_fixture != "-- Sélectionner un match --":
-            h_sel, a_sel = selected_fixture.split(" vs ")
-            if h_sel in teams_list:
-                idx_h = teams_list.index(h_sel)
-            if a_sel in teams_list:
-                idx_a = teams_list.index(a_sel)
+  code_fd = LEAGUES[league_key]["fd_code"]
+  league_fixtures = df_fixtures[df_fixtures["Div"] == code_fd].copy()
+
+  if not league_fixtures.empty:
+    # 1. Extrait et trie les dates uniques disponibles pour la ligue
+    available_dates = sorted(
+        league_fixtures["Date"].dropna().unique().tolist()
+    )
+
+    col_d, col_m = st.columns(2)
+
+    with col_d:
+      selected_date = st.selectbox(
+          "📅 1. Sélectionner une date",
+          options=["-- Toutes les dates --"] + available_dates,
+      )
+
+    # Filtrer les rencontres selon la date
+    if selected_date != "-- Toutes les dates --":
+      filtered_fixtures = league_fixtures[
+          league_fixtures["Date"] == selected_date
+      ]
+    else:
+      filtered_fixtures = league_fixtures
+
+    # 2. Générer la liste des matchs avec la date affichée
+    fixture_options = filtered_fixtures.apply(
+        lambda r: f"{r['HomeTeam']} vs {r['AwayTeam']} ({r['Date']})", axis=1
+    ).tolist()
+
+    with col_m:
+      selected_fixture = st.selectbox(
+          "⚽ 2. Choisir le match",
+          options=["-- Sélectionner un match --"] + fixture_options,
+      )
+
+    if selected_fixture != "-- Sélectionner un match --":
+      # Isoler 'Équipe A vs Équipe B' en ignorant la date entre parenthèses
+      match_str = selected_fixture.rsplit(" (", 1)[0]
+      h_sel, a_sel = match_str.split(" vs ")
+      if h_sel in teams_list:
+        idx_h = teams_list.index(h_sel)
+      if a_sel in teams_list:
+        idx_a = teams_list.index(a_sel)
 
 st.divider()
 
 col1, col2 = st.columns(2)
-with col1: home_team = st.selectbox("🏠 Équipe à Domicile", options=teams_list, index=idx_h)
-with col2: away_team = st.selectbox("✈️ Équipe à l'Extérieur", options=teams_list, index=idx_a)
+with col1:
+  home_team = st.selectbox(
+      "🏠 Équipe à Domicile", options=teams_list, index=idx_h
+  )
+with col2:
+  away_team = st.selectbox(
+      "✈️ Équipe à l'Extérieur", options=teams_list, index=idx_a
+  )
 
 # --- BLOC PARAMÈTRES LIVE SI ACTIVÉ ---
 live_minute, live_home_score, live_away_score = 0, 0, 0
