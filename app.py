@@ -271,7 +271,7 @@ st.sidebar.subheader("📊 Performance Hebdo (7j)")
 total_vbs = 24
 avg_edge = 6.8
 avg_odds = 1.88
-expected_yield = 8.4
+expected_roi = 8.4
 top_league = "Premier League"
 pct_buts = 0.60
 pct_tirs = 0.40
@@ -284,7 +284,7 @@ with kpi_col1:
 
 with kpi_col2:
   st.metric(label="Edge Moyen", value=f"+{avg_edge:.1f}%")
-  st.metric(label="Yield Théorique", value=f"+{expected_yield:.1f}%")
+  st.metric(label="ROI Théorique", value=f"+{expected_roi:.1f}%")
 
 # Top Ligue & Répartition
 st.sidebar.metric(label="🏆 Top Ligue (Edge)", value=top_league)
