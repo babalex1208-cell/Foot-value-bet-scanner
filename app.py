@@ -256,12 +256,81 @@ def train_all_models(df):
 st.sidebar.header("🎯 Mode d'Analyse")
 match_mode = st.sidebar.radio("Sélectionnez le contexte", ["Avant-match (Statique)", "En direct (Live)"])
 
-st.sidebar.divider()
 st.sidebar.header("📋 Catégories à Analyser")
 cat_buts_main=st.sidebar.checkbox("⚽ Marchés Buts Principaux", value=True)
 cat_buts_team=st.sidebar.checkbox("🥅 Buts par Équipe", value=True)
 cat_shots=st.sidebar.checkbox("📊 Tirs & Tirs Cadrés", value=True)
-st.sidebar.markdown("Sélectionnez la tranche de cotes à cibler selon votre volume hebdomadaire.")
+
+st.sidebar.divider()
+
+
+# --- 2. CARTES MÉTRIQUES HEBDOMADAIRES (PLAGÉES JUSTE APRÈS) ---
+st.sidebar.subheader("📊 Performance Hebdo (7j)")
+
+# Données (exemples à relier à tes données réelles/Google Sheets)
+total_vbs = 24
+avg_edge = 6.8
+avg_odds = 1.88
+expected_yield = 8.4
+top_league = "Premier League"
+pct_buts = 0.60
+pct_tirs = 0.40
+
+# Grille 2x2
+kpi_col1, kpi_col2 = st.sidebar.columns(2)
+with kpi_col1:
+  st.metric(label="Value Bets", value=f"{total_vbs}", delta="+5 vs S-1")
+  st.metric(label="Cote Moyenne", value=f"{avg_odds:.2f}")
+
+with kpi_col2:
+  st.metric(label="Edge Moyen", value=f"+{avg_edge:.1f}%")
+  st.metric(label="Yield Théorique", value=f"+{expected_yield:.1f}%")
+
+# Top Ligue & Répartition
+st.sidebar.metric(label="🏆 Top Ligue (Edge)", value=top_league)
+
+st.sidebar.markdown("**🎯 Répartition Marchés**")
+st.sidebar.caption(f"{pct_buts:.0%} Buts  |  {pct_tirs:.0%} Tirs")
+st.sidebar.progress(pct_buts)
+
+st.sidebar.divider()
+
+# --- 3. PARAMÈTRES & FILTRES DU MATCH (Avant-match / Live, Cotes min/max, Edge min) ---
+st.sidebar.subheader("⚙️ Filtres de Recherche")
+
+match_mode = st.sidebar.radio(
+    "Mode de match :", options=["Avant-match", "En direct (Live)"]
+)
+
+if match_mode == "En direct (Live)":
+  live_minute = st.sidebar.slider("Minute du match", 1, 90, 45)
+  col_s1, col_s2 = st.sidebar.columns(2)
+  with col_s1:
+    live_home_score = st.sidebar.number_input(
+        "Score Domicile", min_value=0, value=0
+    )
+  with col_s2:
+    live_away_score = st.sidebar.number_input(
+        "Score Extérieur", min_value=0, value=0
+    )
+
+col_c1, col_c2 = st.sidebar.columns(2)
+with col_c1:
+  cote_min = st.sidebar.number_input(
+      "Cote Min", min_value=1.01, value=1.30, step=0.05
+  )
+with col_c2:
+  cote_max = st.sidebar.number_input(
+      "Cote Max", min_value=1.01, value=4.00, step=0.10
+  )
+
+min_edge = (
+    st.sidebar.slider(
+        "Edge minimum (%)", min_value=0.0, max_value=20.0, value=3.0, step=0.5
+    )
+    / 100.0
+)
+
 
 cote_min, cote_max = 1.50, 2.3
 
