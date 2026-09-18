@@ -617,57 +617,128 @@ if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_wi
         
         results.sort(key=lambda x: x.edge, reverse=True)
 
-        # --- 4. AFFICHAGE DES RÉSULTATS DANS L'APPLICATION ---
+            # --- 4. AFFICHAGE DES RÉSULTATS DANS L'APPLICATION ---
         st.header(f"📊 Rapport : {home_team} vs {away_team}")
         if match_mode == "En direct (Live)":
-            st.caption(f"⚡ Analyse Live à la {live_minute}e minute | Score actuel : {live_home_score} - {live_away_score}")
+          st.caption(
+              f"⚡ Analyse Live à la {live_minute}e minute | Score actuel :"
+              f" {live_home_score} - {live_away_score}"
+          )
 
-        st.subheader(f"💸 Value Bets Détectés (Stratégie : côtes entre 1,5 et 2,3)")
+        st.subheader(
+            "💸 Value Bets Détectés (Stratégie : côtes entre 1,5 et 2,3)"
+        )
         if not results:
-            st.info("Aucun Value Bet détecté pour ce match avec vos critères actuels (Edge ou Cotes hors limites).")
+          st.info(
+              "Aucun Value Bet détecté pour ce match avec vos critères actuels"
+              " (Edge ou Cotes hors limites)."
+          )
         else:
-            # Nuage de points Plotly
-            df_res = pd.DataFrame([
-                {
-                    "Marché": vb.market.upper(),
-                    "Sélection": vb.selection.upper(),
-                    "Cote": vb.bookmaker_odds,
-                    "Edge (%)": round(vb.edge * 100, 2),
-                    "Probabilité (%)": round(vb.model_prob * 100, 1)
-                }
-                for vb in results
-            ])
-
-            fig = px.scatter(
-                df_res,
-                x="Cote",
-                y="Edge (%)",
-                color="Edge (%)",
-                hover_data=["Marché", "Sélection", "Probabilité (%)"],
-                title="📌 Répartition Cote vs Edge des opportunités détectées",
-                labels={"Cote": "Cote Bookmaker", "Edge (%)": "Edge / Value (%)"},
-                color_continuous_scale="RdYlGn"
+          # --- 1. BOUTON D'EXPORT GLOBAL (Tout exporter d'un coup) ---
+          if st.button(
+              f"📤 Exporter les {len(results)} Value Bets vers Google Sheets",
+              type="primary",
+              use_container_width=True,
+          ):
+            success = export_all_value_bets_to_sheet(
+                sheet_name="Résultats app valuebet foor",  # Nom exact de ton fichier Sheets
+                results=results,
+                match_date=selected_date,
+                match_mode=match_mode,
+                timing_paris=timing_paris,
+                league_name=league_key,  # Ou la variable contenant le nom du championnat
+                home_team=home_team,
+                away_team=away_team,
             )
-            fig.add_hline(y=min_edge * 100, line_dash="dash", line_color="red", annotation_text=f"Seuil Min ({min_edge*100:.1f}%)")
-            st.plotly_chart(fig, use_container_width=True)
+            if success:
+              st.success(
+                  f"✅ {len(results)} Value Bets exportés avec succès vers"
+                  " Google Sheets !"
+              )
+
+          st.divider()
+
+          # Nuage de points Plotly
+          df_res = pd.DataFrame([{
+              "Marché": vb.market.upper(),
+              "Sélection": vb.selection.upper(),
+              "Cote": vb.bookmaker_odds,
+              "Edge (%)": round(vb.edge * 100, 2),
+              "Probabilité (%)": round(vb.model_prob * 100, 1),
+          } for vb in results])
+
+          fig = px.scatter(
+              df_res,
+              x="Cote",
+              y="Edge (%)",
+              color="Edge (%)",
+              hover_data=["Marché", "Sélection", "Probabilité (%)"],
+              title="📌 Répartition Cote vs Edge des opportunités détectées",
+              labels={"Cote": "Cote Bookmaker", "Edge (%)": "Edge / Value (%)"},
+              color_continuous_scale="RdYlGn",
+          )
+          fig.add_hline(
+              y=min_edge * 100,
+              line_dash="dash",
+              line_color="red",
+              annotation_text=f"Seuil Min ({min_edge*100:.1f}%)",
+          )
+          st.plotly_chart(fig, use_container_width=True)
+          st.divider()
+
+          # --- 2. BOUCLE D'AFFICHAGE ET BOUTONS INDIVIDUELS ---
+          # Note le enumerate(results) pour attribuer une clé unique (key) à chaque bouton
+          for idx, vb in enumerate(results):
+            display_market = vb.market.upper()
+            display_selection = vb.selection.upper()
+
+            if vb.market == "double_chance":
+              display_market = "DOUBLE CHANCE"
+              if vb.selection == "1X":
+                display_selection = f"1X ({home_team} OU NUL)"
+              elif vb.selection == "12":
+                display_selection = f"12 ({home_team} OU {away_team})"
+              elif vb.selection == "X2":
+                display_selection = f"X2 (NUL OU {away_team})"
+            elif vb.market == "home_goals":
+              display_market = f"BUTS {home_team.upper()}"
+            elif vb.market == "away_goals":
+              display_market = f"BUTS {away_team.upper()}"
+            elif vb.market.startswith("tirs_domicile_"):
+              display_market = f"TIRS {home_team.upper()}"
+            elif vb.market.startswith("tirs_exterieur_"):
+              display_market = f"TIRS {away_team.upper()}"
+            elif vb.market.startswith("sot_domicile_"):
+              display_market = f"SOT {home_team.upper()}"
+            elif vb.market.startswith("sot_exterieur_"):
+              display_market = f"SOT {away_team.upper()}"
+
+            st.success(
+                f"🎯 **[{display_market}] Option : {display_selection}**"
+            )
+            st.write(
+                f"• Probabilité estimée : **{vb.model_prob:.1%}** | Cote"
+                f" saisie : **{vb.bookmaker_odds}**"
+            )
+            st.write(
+                f"• **EDGE : +{vb.edge:.1%}** | Mise Kelly (1/4) conseillée :"
+                f" **{vb.kelly_quart:.1%}**"
+            )
+
+            # --- BOUTON D'EXPORT INDIVIDUEL ---
+            if st.button(f"📤 Exporter ce pari (#{idx+1})", key=f"export_{idx}"):
+              success = export_value_bet_to_sheet(
+                  sheet_name="Résultats app valuebet foor",  # Nom exact de ton fichier Sheets
+                  vb=vb,
+                  match_date=selected_date,
+                  match_mode=match_mode,
+                  timing_paris=timing_paris,
+                  league_name=league_key,  # Ou la variable contenant le nom du championnat
+                  home_team=home_team,
+                  away_team=away_team,
+              )
+              if success:
+                st.success("✅ Pari exporté vers Google Sheets !")
+
             st.divider()
 
-            for vb in results:
-                display_market = vb.market.upper()
-                display_selection = vb.selection.upper()
-                
-                if vb.market == "double_chance":
-                    display_market = "DOUBLE CHANCE"
-                    if vb.selection == "1X": display_selection = f"1X ({home_team} OU NUL)"
-                    elif vb.selection == "12": display_selection = f"12 ({home_team} OU {away_team})"
-                    elif vb.selection == "X2": display_selection = f"X2 (NUL OU {away_team})"
-                elif vb.market == "home_goals": display_market = f"BUTS {home_team.upper()}"
-                elif vb.market == "away_goals": display_market = f"BUTS {away_team.upper()}"
-                elif vb.market.startswith("tirs_domicile_"): display_market = f"TIRS {home_team.upper()}"
-                elif vb.market.startswith("tirs_exterieur_"): display_market = f"TIRS {away_team.upper()}"
-                elif vb.market.startswith("sot_domicile_"): display_market = f"SOT {home_team.upper()}"
-                elif vb.market.startswith("sot_exterieur_"): display_market = f"SOT {away_team.upper()}"
-
-                st.success(f"🎯 **[{display_market}] Option : {display_selection}**")
-                st.write(f"• Probabilité estimée : **{vb.model_prob:.1%}** | Cote saisie : **{vb.bookmaker_odds}**")
-                st.write(f"• **EDGE : +{vb.edge:.1%}** | Mise Kelly (1/4) conseillée : **{vb.kelly_quart:.1%}**")
