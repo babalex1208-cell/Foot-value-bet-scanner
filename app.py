@@ -301,7 +301,7 @@ if df_fixtures is not None and not df_fixtures.empty:
         league_fixtures["Date"].dropna().unique().tolist()
     )
 
-    col_d, col_m = st.columns(2)
+    col_d, col_m = st.columns([1, 3])
 
     with col_d:
       selected_date = st.selectbox(
@@ -319,7 +319,7 @@ if df_fixtures is not None and not df_fixtures.empty:
 
     # 2. Générer la liste des matchs avec la date affichée
     fixture_options = filtered_fixtures.apply(
-        lambda r: f"{r['HomeTeam']} vs {r['AwayTeam']} ({r['Date']})", axis=1
+        lambda r: f"{r['HomeTeam']} vs {r['AwayTeam']}", axis=1
     ).tolist()
 
     with col_m:
