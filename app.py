@@ -585,19 +585,19 @@ if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_wi
         if not results:
             st.info("Aucun Value Bet détecté pour ce match avec vos critères actuels (Edge ou Cotes hors limites).")
         else:
-             # --- NOUVEAU : NUAGE DE POINTS PLOTLY ---
+            # --- NOUVEAU : NUAGE DE POINTS PLOTLY ---
             df_res = pd.DataFrame([
-              {
+                {
                   "Marché": vb.market.upper(),
                   "Sélection": vb.selection.upper(),
                   "Cote": vb.bookmaker_odds,
                   "Edge (%)": round(vb.edge * 100, 2),
                   "Probabilité (%)": round(vb.model_prob * 100, 1),
-              }
-              for vb in results
-          ])
-
-          fig = px.scatter(
+                }
+                for vb in results
+            ])
+            
+            fig = px.scatter(
               df_res,
               x="Cote",
               y="Edge (%)",
@@ -606,18 +606,18 @@ if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_wi
               title="📌 Répartition Cote vs Edge des opportunités détectées",
               labels={"Cote": "Cote Bookmaker", "Edge (%)": "Edge / Value (%)"},
               color_continuous_scale="RdYlGn",
-          )
-
-          # Ligne rouge pointillée au niveau du seuil minimal fixé par le slider
-          fig.add_hline(
+            )
+            
+            # Ligne rouge pointillée au niveau du seuil minimal fixé par le slider
+            fig.add_hline(
               y=min_edge * 100,
               line_dash="dash",
               line_color="red",
               annotation_text=f"Seuil Min ({min_edge*100:.1f}%)",
-          )
-
-          st.plotly_chart(fig, use_container_width=True)
-          st.divider()
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            st.divider()
             for vb in results:
                 display_market = vb.market.upper()
                 display_selection = vb.selection.upper()
