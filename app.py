@@ -10,6 +10,7 @@ import math
 from scipy.optimize import minimize
 from scipy.stats import poisson, nbinom # NOUVEAU: Import de nbinom
 from dataclasses import dataclass
+import plotly.express as px
 
 # ==========================================
 # 1. CONFIGURATION
@@ -224,6 +225,24 @@ def load_and_clean_data(league_code):
 
   return data
 
+def load_fixtures():
+  """Récupère le calendrier des prochains matchs depuis Football-Data"""
+  scraper = cloudscraper.create_scraper()
+  url = "https://www.football-data.co.uk/fixtures.csv"
+  try:
+    response = scraper.get(url, timeout=10)
+    if response.status_code == 200:
+      try:
+        content = response.content.decode("utf-8")
+      except UnicodeDecodeError:
+        content = response.content.decode("latin-1")
+      df_fix = pd.read_csv(io.StringIO(content))
+      return df_fix
+  except Exception:
+    pass
+  return None
+
+
 @st.cache_resource(show_spinner=False)
 def train_all_models(df):
     goal_model = DixonColesModel().fit(df, "FTHG", "FTAG", halflife_days=TIME_DECAY_HALFLIFE_DAYS)
@@ -268,11 +287,34 @@ with st.spinner(f"Calcul et calibration des modèles..."):
         st.error("Impossible de charger les données.")
         st.stop()
 
+# NOUVEAU : CHARGEMENT DU CALENDRIER ET SÉLECTION DU MATCH
+ok
+df_fixtures = load_fixtures()
+idx_h, idx_a = 0, min(1, len(teams_list) - 1)
+
+if df_fixtures is not None and not df_fixtures.empty:
+    code_fd = LEAGUES[league_key]["fd_code"]
+    league_fixtures = df_fixtures[df_fixtures["Div"] == code_fd]
+    
+    if not league_fixtures.empty:
+        fixture_options = league_fixtures.apply(lambda r: f"{r['HomeTeam']} vs {r['AwayTeam']}", axis=1).tolist()
+        selected_fixture = st.selectbox(
+            "📅 Choisir une rencontre à venir (ou laisser en saisie libre)",
+            options=["-- Sélectionner un match --"] + fixture_options
+        )
+        
+        if selected_fixture != "-- Sélectionner un match --":
+            h_sel, a_sel = selected_fixture.split(" vs ")
+            if h_sel in teams_list:
+                idx_h = teams_list.index(h_sel)
+            if a_sel in teams_list:
+                idx_a = teams_list.index(a_sel)
+
 st.divider()
 
 col1, col2 = st.columns(2)
-with col1: home_team = st.selectbox("🏠 Équipe à Domicile", options=teams_list)
-with col2: away_team = st.selectbox("✈️ Équipe à l'Extérieur", options=teams_list, index=1)
+with col1: home_team = st.selectbox("🏠 Équipe à Domicile", options=teams_list, index=idx_h)
+with col2: away_team = st.selectbox("✈️ Équipe à l'Extérieur", options=teams_list, index=idx_a)
 
 # --- BLOC PARAMÈTRES LIVE SI ACTIVÉ ---
 live_minute, live_home_score, live_away_score = 0, 0, 0
@@ -539,10 +581,43 @@ if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_wi
         c3.metric("Tirs Attendus Dom", f"{lam_h_shots:.1f}")
         c4.metric("Tirs Attendus Ext", f"{lam_a_shots:.1f}")
 
-        st.subheader(f"💸 Value Bets Détectés (Stratégie : {strategie.split('(')[0].strip()})")
+        st.subheader(f"💸 Value Bets Détectés (Stratégie : {strategie.split('(')[0].strip()})")        
         if not results:
             st.info("Aucun Value Bet détecté pour ce match avec vos critères actuels (Edge ou Cotes hors limites).")
         else:
+             # --- NOUVEAU : NUAGE DE POINTS PLOTLY ---
+            df_res = pd.DataFrame([
+              {
+                  "Marché": vb.market.upper(),
+                  "Sélection": vb.selection.upper(),
+                  "Cote": vb.bookmaker_odds,
+                  "Edge (%)": round(vb.edge * 100, 2),
+                  "Probabilité (%)": round(vb.model_prob * 100, 1),
+              }
+              for vb in results
+          ])
+
+          fig = px.scatter(
+              df_res,
+              x="Cote",
+              y="Edge (%)",
+              color="Edge (%)",
+              hover_data=["Marché", "Sélection", "Probabilité (%)"],
+              title="📌 Répartition Cote vs Edge des opportunités détectées",
+              labels={"Cote": "Cote Bookmaker", "Edge (%)": "Edge / Value (%)"},
+              color_continuous_scale="RdYlGn",
+          )
+
+          # Ligne rouge pointillée au niveau du seuil minimal fixé par le slider
+          fig.add_hline(
+              y=min_edge * 100,
+              line_dash="dash",
+              line_color="red",
+              annotation_text=f"Seuil Min ({min_edge*100:.1f}%)",
+          )
+
+          st.plotly_chart(fig, use_container_width=True)
+          st.divider()
             for vb in results:
                 display_market = vb.market.upper()
                 display_selection = vb.selection.upper()
