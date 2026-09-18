@@ -589,7 +589,7 @@ if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_wi
         if match_mode == "En direct (Live)":
             st.caption(f"⚡ Analyse Live à la {live_minute}e minute | Score actuel : {live_home_score} - {live_away_score}")
 
-        st.subheader(f"💸 Value Bets Détectés (Stratégie : {strategie.split('(')[0].strip()})")
+        st.subheader(f"💸 Value Bets Détectés (Stratégie : côtes entre 1,5 et 2,3)")
         if not results:
             st.info("Aucun Value Bet détecté pour ce match avec vos critères actuels (Edge ou Cotes hors limites).")
         else:
