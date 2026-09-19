@@ -1,7 +1,9 @@
 streamlit
+gspread
+google-auth
 pandas
 numpy
 scipy
 requests
 cloudscraper
-plotly.express
+plotly 
