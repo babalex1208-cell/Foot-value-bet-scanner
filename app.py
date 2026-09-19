@@ -649,87 +649,87 @@ if cat_buts_main:
     st.markdown("### 🏆 Résultat Match (1X2)")
     c1, c2, c3 = st.columns(3)
     h_odd = c1.number_input("Cote 1 (Domicile)", value=None, step=0.01)
-    d_odd = c2.number_input("Cote X (Nul)", value=3.40, step=0.01)
-    a_odd = c3.number_input("Cote 2 (Extérieur)", value=3.80, step=0.01)
+    d_odd = c2.number_input("Cote X (Nul)", value=None, step=0.01)
+    a_odd = c3.number_input("Cote 2 (Extérieur)", value=None, step=0.01)
 
     st.markdown("### 🛡️ Double Chance")
     c1, c2, c3 = st.columns(3)
-    dc_1x = c1.number_input("1X (Dom ou Nul)", value=1.28, step=0.01)
-    dc_12 = c2.number_input("12 (Dom ou Ext)", value=1.30, step=0.01)
-    dc_x2 = c3.number_input("X2 (Nul ou Ext)", value=1.70, step=0.01)
+    dc_1x = c1.number_input("1X (Dom ou Nul)", value=None, step=0.01)
+    dc_12 = c2.number_input("12 (Dom ou Ext)", value=None, step=0.01)
+    dc_x2 = c3.number_input("X2 (Nul ou Ext)", value=None, step=0.01)
 
     st.markdown("### ⚽ Buts & BTTS")
     c1, c2, c3, c4 = st.columns(4)
-    ou_over = c1.number_input("Over 2.5 (Buts)", value=1.90, step=0.01)
-    ou_under = c2.number_input("Under 2.5 (Buts)", value=1.90, step=0.01)
-    btts_yes = c3.number_input("BTTS Oui", value=1.85, step=0.01)
-    btts_no = c4.number_input("BTTS Non", value=1.95, step=0.01)
+    ou_over = c1.number_input("Over 2.5 (Buts)", value=None, step=0.01)
+    ou_under = c2.number_input("Under 2.5 (Buts)", value=None, step=0.01)
+    btts_yes = c3.number_input("BTTS Oui", value=None, step=0.01)
+    btts_no = c4.number_input("BTTS Non", value=None, step=0.01)
 
 if cat_buts_team:
   with st.expander("🥅 BUTS PAR ÉQUIPE (Over / Under 0.5 et 1.5)"):
     st.markdown(f"**🏠 {home_team} (Domicile)**")
     c1, c2, c3, c4 = st.columns(4)
-    hg_o05 = c1.number_input("Over 0.5 (Dom)", value=1.15, step=0.01)
-    hg_u05 = c2.number_input("Under 0.5 (Dom)", value=5.00, step=0.01)
-    hg_o15 = c3.number_input("Over 1.5 (Dom)", value=2.10, step=0.01)
-    hg_u15 = c4.number_input("Under 1.5 (Dom)", value=1.70, step=0.01)
+    hg_o05 = c1.number_input("Over 0.5 (Dom)", value=None, step=0.01)
+    hg_u05 = c2.number_input("Under 0.5 (Dom)", value=None, step=0.01)
+    hg_o15 = c3.number_input("Over 1.5 (Dom)", value=None, step=0.01)
+    hg_u15 = c4.number_input("Under 1.5 (Dom)", value=None, step=0.01)
 
     st.markdown(f"**✈️ {away_team} (Extérieur)**")
     c1, c2, c3, c4 = st.columns(4)
-    ag_o05 = c1.number_input("Over 0.5 (Ext)", value=1.40, step=0.01)
-    ag_u05 = c2.number_input("Under 0.5 (Ext)", value=2.80, step=0.01)
-    ag_o15 = c3.number_input("Over 1.5 (Ext)", value=3.50, step=0.01)
-    ag_u15 = c4.number_input("Under 1.5 (Ext)", value=1.28, step=0.01)
+    ag_o05 = c1.number_input("Over 0.5 (Ext)", value=None, step=0.01)
+    ag_u05 = c2.number_input("Under 0.5 (Ext)", value=None, step=0.01)
+    ag_o15 = c3.number_input("Over 1.5 (Ext)", value=None, step=0.01)
+    ag_u15 = c4.number_input("Under 1.5 (Ext)", value=None, step=0.01)
 
 if cat_shots:
   with st.expander("📊 MARCHÉS DES TIRS & TIRS CADRÉS (Lignes ajustables)"):
     st.markdown("### 🏹 Tirs Totaux (Match)")
     c1, c2, c3 = st.columns(3)
     t_shots_line = c1.number_input(
-        "Ligne de Tirs Match (ex: 24.5)", value=24.5, step=0.5
+        "Ligne de Tirs Match (ex: 24.5)", value=None, step=0.5
     )
     t_shots_o = c2.number_input(
-        "Cote Over Tirs Match", value=1.85, step=0.01, key="ts_o"
+        "Cote Over Tirs Match", value=None, step=0.01, key="ts_o"
     )
     t_shots_u = c3.number_input(
-        "Cote Under Tirs Match", value=1.85, step=0.01, key="ts_u"
+        "Cote Under Tirs Match", value=None, step=0.01, key="ts_u"
     )
 
     st.markdown(f"### 🏠 Tirs Totaux Individuels : {home_team}")
     c1, c2, c3 = st.columns(3)
     h_shots_line = c1.number_input(
-        f"Ligne Tirs Totaux {home_team}", value=13.5, step=0.5
+        f"Ligne Tirs Totaux {home_team}", value=None, step=0.5
     )
-    h_shots_o = c2.number_input("Cote Over Tirs Dom", value=1.85, step=0.01)
-    h_shots_u = c3.number_input("Cote Under Tirs Dom", value=1.85, step=0.01)
+    h_shots_o = c2.number_input("Cote Over Tirs Dom", value=None, step=0.01)
+    h_shots_u = c3.number_input("Cote Under Tirs Dom", value=None, step=0.01)
 
     st.markdown(f"### ✈️ Tirs Totaux Individuels : {away_team}")
     c1, c2, c3 = st.columns(3)
     a_shots_line = c1.number_input(
-        f"Ligne Tirs Totaux {away_team}", value=11.5, step=0.5
+        f"Ligne Tirs Totaux {away_team}", value)=None, step=0.5
     )
-    a_shots_o = c2.number_input("Cote Over Tirs Ext", value=1.85, step=0.01)
-    a_shots_u = c3.number_input("Cote Under Tirs Ext", value=1.85, step=0.01)
+    a_shots_o = c2.number_input("Cote Over Tirs Ext", value=None, step=0.01)
+    a_shots_u = c3.number_input("Cote Under Tirs Ext", value=None, step=0.01)
 
     st.markdown("### 🎯 Tirs Cadrés Totaux (Match)")
     c1, c2, c3 = st.columns(3)
     t_sot_line = c1.number_input(
-        "Ligne Tirs Cadrés Match (ex: 8.5)", value=8.5, step=0.5
+        "Ligne Tirs Cadrés Match (ex: 8.5)", value=None, step=0.5
     )
-    t_sot_o = c2.number_input("Cote Over SOT Match", value=1.85, step=0.01)
-    t_sot_u = c3.number_input("Cote Under SOT Match", value=1.85, step=0.01)
+    t_sot_o = c2.number_input("Cote Over SOT Match", value=None, step=0.01)
+    t_sot_u = c3.number_input("Cote Under SOT Match", value=None, step=0.01)
 
     st.markdown(f"### 🏠 Tirs Cadrés Individuels : {home_team}")
     c1, c2, c3 = st.columns(3)
-    h_sot_line = c1.number_input(f"Ligne SOT {home_team}", value=4.5, step=0.5)
-    h_sot_o = c2.number_input("Cote Over SOT Dom", value=1.85, step=0.01)
-    h_sot_u = c3.number_input("Cote Under SOT Dom", value=1.85, step=0.01)
+    h_sot_line = c1.number_input(f"Ligne SOT {home_team}", value=None, step=0.5)
+    h_sot_o = c2.number_input("Cote Over SOT Dom", value=None, step=0.01)
+    h_sot_u = c3.number_input("Cote Under SOT Dom", value=None, step=0.01)
 
     st.markdown(f"### ✈️ Tirs Cadrés Individuels : {away_team}")
     c1, c2, c3 = st.columns(3)
-    a_sot_line = c1.number_input(f"Ligne SOT {away_team}", value=3.5, step=0.5)
-    a_sot_o = c2.number_input("Cote Over SOT Ext", value=1.85, step=0.01)
-    a_sot_u = c3.number_input("Cote Under SOT Ext", value=1.85, step=0.01)
+    a_sot_line = c1.number_input(f"Ligne SOT {away_team}", value=None, step=0.5)
+    a_sot_o = c2.number_input("Cote Over SOT Ext", value=None, step=0.01)
+    a_sot_u = c3.number_input("Cote Under SOT Ext", value=None, step=0.01)
 
 st.divider()
 
@@ -986,8 +986,10 @@ if st.button(
     results = []
     for market, odds in market_odds.items():
       for sel, odd in odds.items():
-        prob = preds_all[market][sel]
-        edge = prob * odd - 1
+          # On vérifie que la cote a été saisie (non None)
+          if odd is not None:
+              prob = preds_all[market][sel]
+              edge = prob * odd - 1
 
         if edge > min_edge and (cote_min <= odd <= cote_max):
           b = odd - 1
