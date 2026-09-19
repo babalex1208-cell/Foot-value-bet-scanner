@@ -150,7 +150,7 @@ def export_all_value_bets_to_sheet(
     home_team,
     away_team,
     spreadsheet_id=SPREADSHEET_ID,
-    worksheet_name="Test-Export",
+    worksheet_name="Suivi Value Bets Global",
 ):
   """Exporte la liste complète des Value Bets détectés en une seule requête via l'ID du Google Sheet."""
   try:
@@ -187,7 +187,7 @@ def export_value_bet_to_sheet(
     home_team,
     away_team,
     spreadsheet_id=SPREADSHEET_ID,
-    worksheet_name="Test-Export",
+    worksheet_name="Suivi Value Bets Global",
 ):
   """Exporte un seul Value Bet vers Google Sheets via l'ID du Google Sheet."""
   try:
