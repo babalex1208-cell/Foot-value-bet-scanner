@@ -983,22 +983,30 @@ if st.button(
       })
 
     # 3. Moteur de Value Bets
-    COTE_MIN = 1.5
-    COTE_MAX = 2.3
     results = []
     for market, odds in market_odds.items():
       for sel, odd in odds.items():
-          # On vérifie que la cote a été saisie (non None)
-          if odd is not None and (COTE_MIN <= odd <= COTE_MAX):
-              prob = preds_all[market][sel]
-              edge = prob * odd - 1
-
-          if edge > min_edge and (cote_min <= odd <= cote_max):
-              b = odd - 1
-              kelly_quart = (
-                 max(0.0, (b * prob - (1 - prob)) / b) * 0.25 if b > 0 else 0.0
-             )
-          results.append(ValueBetResult(market, sel, prob, odd, edge, kelly_quart))
+        # 1. Si la cote n'a pas été saisie (None), on passe au suivant
+        if odd is None:
+          continue
+    
+        # 2. Sécurité sur les bornes (au cas où cote_min ou cote_max dans le sidebar valaient None)
+        c_min = cote_min if cote_min is not None else 1.50
+        c_max = cote_max if cote_max is not None else 2.30
+    
+        # 3. Vérification de la tranche [1.50 - 2.30]
+        if c_min <= odd <= c_max:
+          prob = preds_all[market][sel]
+          edge = prob * odd - 1
+    
+          if edge > min_edge:
+            b = odd - 1
+            kelly_quart = (
+                max(0.0, (b * prob - (1 - prob)) / b) * 0.25 if b > 0 else 0.0
+            )
+            results.append(
+                ValueBetResult(market, sel, prob, odd, edge, kelly_quart)
+            )
 
     results.sort(key=lambda x: x.edge, reverse=True)
 
