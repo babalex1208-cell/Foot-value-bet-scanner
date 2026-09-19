@@ -983,11 +983,13 @@ if st.button(
       })
 
     # 3. Moteur de Value Bets
+    COTE_MIN = 1.5
+    COTE_MAX = 2.3
     results = []
     for market, odds in market_odds.items():
       for sel, odd in odds.items():
           # On vérifie que la cote a été saisie (non None)
-          if odd is not None:
+          if odd is not None and (COTE_MIN <= odd <= COTE_MAX):
               prob = preds_all[market][sel]
               edge = prob * odd - 1
 
