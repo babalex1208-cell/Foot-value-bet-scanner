@@ -235,17 +235,24 @@ def dixon_coles_adjustment(home_goals, away_goals, lam_home, lam_away, rho):
 
 
 def proba_tirs_nbinom(mu, var, ligne_bookmaker):
-  """Calcule les probas statistiques avec la Loi Binomiale Négative si surdispersion"""
+  """Calcule les probas statistiques avec la Loi Binomiale Négative / Poisson."""
+  # SÉCURITÉ : Si aucun cut/ligne n'est renseigné, on sort directement
+  if ligne_bookmaker is None:
+    return 0.0, 0.0
+
   seuil = int(np.floor(ligne_bookmaker))
 
   if var <= mu or math.isnan(var) or var == 0:
     p_under = poisson.cdf(seuil, mu)
   else:
+    # Ton code habituel pour le calcul nbinom...
+    r = (mu**2) / (var - mu)
     p = mu / var
-    n = (mu**2) / (var - mu)
-    p_under = nbinom.cdf(seuil, n, p)
+    p_under = nbinom.cdf(seuil, r, p)
 
-  return p_under, 1.0 - p_under
+  p_over = 1.0 - p_under
+  return p_under, p_over
+
 
 
 class DixonColesModel:
@@ -916,71 +923,66 @@ if st.button(
         var_h_sot *= ratio
         var_a_sot *= ratio
 
-      prob_shots_under, prob_shots_over = proba_tirs_nbinom(
-          lam_h_shots + lam_a_shots,
-          var_h_shots + var_a_shots,
-          t_shots_line,
-      )
-      prob_h_shots_under, prob_h_shots_over = proba_tirs_nbinom(
-          lam_h_shots, var_h_shots, h_shots_line
-      )
-      prob_a_shots_under, prob_a_shots_over = proba_tirs_nbinom(
-          lam_a_shots, var_a_shots, a_shots_line
-      )
+      # Configuration centralisée des marchés Tirs et SOT
+      shots_config = [
+          (
+              "tirs_match",
+              t_shots_line,
+              lam_h_shots + lam_a_shots,
+              var_h_shots + var_a_shots,
+              t_shots_o,
+              t_shots_u,
+          ),
+          (
+              "tirs_domicile",
+              h_shots_line,
+              lam_h_shots,
+              var_h_shots,
+              h_shots_o,
+              h_shots_u,
+          ),
+          (
+              "tirs_exterieur",
+              a_shots_line,
+              lam_a_shots,
+              var_a_shots,
+              a_shots_o,
+              a_shots_u,
+          ),
+          (
+              "sot_match",
+              t_sot_line,
+              lam_h_sot + lam_a_sot,
+              var_h_sot + var_a_sot,
+              t_sot_o,
+              t_sot_u,
+          ),
+          (
+              "sot_domicile",
+              h_sot_line,
+              lam_h_sot,
+              var_h_sot,
+              h_sot_o,
+              h_sot_u,
+          ),
+          (
+              "sot_exterieur",
+              a_sot_line,
+              lam_a_sot,
+              var_a_sot,
+              a_sot_o,
+              a_sot_u,
+          ),
+      ]
 
-      prob_sot_under, prob_sot_over = proba_tirs_nbinom(
-          lam_h_sot + lam_a_sot, var_h_sot + var_a_sot, t_sot_line
-      )
-      prob_h_sot_under, prob_h_sot_over = proba_tirs_nbinom(
-          lam_h_sot, var_h_sot, h_sot_line
-      )
-      prob_a_sot_under, prob_a_sot_over = proba_tirs_nbinom(
-          lam_a_sot, var_a_sot, a_sot_line
-      )
+      # Seuls les marchés dont la ligne/cut est saisie sont calculés
+      for prefix, line, lam, var, odd_o, odd_u in shots_config:
+        if line is not None:
+          prob_u, prob_o = proba_tirs_nbinom(lam, var, line)
+          market_key = f"{prefix}_{line}"
+          preds_all[market_key] = {"over": prob_o, "under": prob_u}
+          market_odds[market_key] = {"over": odd_o, "under": odd_u}
 
-      preds_all.update({
-          f"tirs_match_{t_shots_line}": {
-              "over": prob_shots_over,
-              "under": prob_shots_under,
-          },
-          f"tirs_domicile_{h_shots_line}": {
-              "over": prob_h_shots_over,
-              "under": prob_h_shots_under,
-          },
-          f"tirs_exterieur_{a_shots_line}": {
-              "over": prob_a_shots_over,
-              "under": prob_a_shots_under,
-          },
-          f"sot_match_{t_sot_line}": {
-              "over": prob_sot_over,
-              "under": prob_sot_under,
-          },
-          f"sot_domicile_{h_sot_line}": {
-              "over": prob_h_sot_over,
-              "under": prob_h_sot_under,
-          },
-          f"sot_exterieur_{a_sot_line}": {
-              "over": prob_a_sot_over,
-              "under": prob_a_sot_under,
-          },
-      })
-      market_odds.update({
-          f"tirs_match_{t_shots_line}": {
-              "over": t_shots_o,
-              "under": t_shots_u,
-          },
-          f"tirs_domicile_{h_shots_line}": {
-              "over": h_shots_o,
-              "under": h_shots_u,
-          },
-          f"tirs_exterieur_{a_shots_line}": {
-              "over": a_shots_o,
-              "under": a_shots_u,
-          },
-          f"sot_match_{t_sot_line}": {"over": t_sot_o, "under": t_sot_u},
-          f"sot_domicile_{h_sot_line}": {"over": h_sot_o, "under": h_sot_u},
-          f"sot_exterieur_{a_sot_line}": {"over": a_sot_o, "under": a_sot_u},
-      })
 
     # 3. Moteur de Value Bets
     results = []
