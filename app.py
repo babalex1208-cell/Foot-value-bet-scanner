@@ -109,27 +109,34 @@ def build_sheets_row(
       vb.market, vb.selection, home_team, away_team
   )
 
+  # Nettoyage du championnat (ne garde que la compétition)
+  clean_league = (
+      league_name.split(" - ")[-1] if " - " in str(league_name) else league_name
+  )
+
+  # Edge et Kelly sous forme décimale (ex: 0.0912 pour 9,12%)
+  edge_val = round(float(vb.edge), 4)
+  kelly_val = round(float(vb.kelly_quart), 4)
+
   return [
       str(match_date),  # A: Dates
       "Live" if match_mode == "En direct (Live)" else "Avant",  # B: Avant/Live
       timing_paris,  # C: Timing prise de paris
-      league_name,  # D: Championnat
+      clean_league,  # D: Championnat
       f"{home_team} / {away_team}",  # E: Match
       bet_name,  # F: Paris
       cut_str,  # G: Cut tirs
-      str(vb.bookmaker_odds).replace(".", ","),  # H: Côtes prises
+      float(vb.bookmaker_odds),  # H: Cotes prises (float)
       "",  # I: Closing odds
       "",  # J: CLV
-      f"{vb.edge:.1f}".replace(".", ","),  # K: Edge
-      f"{vb.kelly_quart:.1f}".replace(".", ","),  # L: Quart Kelly
+      edge_val,  # K: Edge (ex: 0.05)
+      kelly_val,  # L: Quart Kelly (ex: 0.02)
       "",  # M: Mise Paris
       "",  # N: Resultats paris
       "",  # O: Gains/Pertes
       "",  # P: Bankroll hebdomadaire
   ]
 
-# SPREADSHEET_ID doit être défini en haut de ton script :
-# SPREADSHEET_ID = "11fcyQntgVPi2xjF0GXIeKAZkXrhRkwq2sfysO325kaI"
 
 
 def export_all_value_bets_to_sheet(
@@ -580,7 +587,7 @@ if df_fixtures is not None and not df_fixtures.empty:
     with col_t:
       timing_paris = st.selectbox(
           "⏱️ 3. Timing prise de pari",
-          options=["1. J-2", "2. J-1", "3. H-12 à H-2", "4. H-2 à H"],
+          options=["1. J-2+", "2. J-1", "3. H-12 à H-2", "4. H-2 à H"],
       )
 
     if selected_fixture != "-- Sélectionner un match --":
