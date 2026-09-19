@@ -1042,104 +1042,144 @@ if "analysis_data" in st.session_state:
         " (Edge ou Cotes hors limites)."
     )
   else:
-    # Bouton Export Global
-    if st.button(
-        f"📤 Exporter les {len(results)} Value Bets vers Google Sheets",
-        type="primary",
-        use_container_width=True,
-    ):
-      success = export_all_value_bets_to_sheet(
-          results=results,
-          match_date=selected_date,
-          match_mode=match_mode,
-          timing_paris=timing_paris,
-          league_name=league_country,
-          home_team=home_team,
-          away_team=away_team,
+
+    # -----------------------------------------------------------------------------
+    # 2. AFFICHAGE DU RAPPORT & BOUTONS D'EXPORT
+    # -----------------------------------------------------------------------------
+    if "analysis_data" in st.session_state:
+      data = st.session_state["analysis_data"]
+      results = data["results"]
+      home_team = data["home_team"]
+      away_team = data["away_team"]
+      match_mode = data["match_mode"]
+      selected_date = data["selected_date"]
+      timing_paris = data["timing_paris"]
+      league_country = data["league_country"]
+      min_edge = data["min_edge"]
+    
+      # ✂️ NETTOYAGE DE LA LIGUE : Ne garde que ce qui est après " - "
+      clean_league = (
+          league_country.split(" - ")[-1]
+          if " - " in str(league_country)
+          else league_country
       )
-      if success:
-        st.success(
-            f"✅ {len(results)} Value Bets exportés avec succès vers Google"
-            " Sheets !"
+    
+      st.header(f"📊 Rapport : {home_team} vs {away_team}")
+      if match_mode == "En direct (Live)":
+        st.caption(
+            f"⚡ Analyse Live à la {data['live_minute']}e minute | Score actuel :"
+            f" {data['live_home_score']} - {data['live_away_score']}"
         )
-
-    st.divider()
-
-    # Plotly Scatter
-    df_res = pd.DataFrame([{
-        "Marché": vb.market.upper(),
-        "Sélection": vb.selection.upper(),
-        "Cote": vb.bookmaker_odds,
-        "Edge (%)": round(vb.edge * 100, 2),
-        "Probabilité (%)": round(vb.model_prob * 100, 1),
-    } for vb in results])
-
-    fig = px.scatter(
-        df_res,
-        x="Cote",
-        y="Edge (%)",
-        color="Edge (%)",
-        hover_data=["Marché", "Sélection", "Probabilité (%)"],
-        title="📌 Répartition Cote vs Edge des opportunités détectées",
-        labels={"Cote": "Cote Bookmaker", "Edge (%)": "Edge / Value (%)"},
-        color_continuous_scale="RdYlGn",
-    )
-    fig.add_hline(
-        y=min_edge * 100,
-        line_dash="dash",
-        line_color="red",
-        annotation_text=f"Seuil Min ({min_edge*100:.1f}%)",
-    )
-    st.plotly_chart(fig, use_container_width=True)
-    st.divider()
-
-    # Boucle des résultats et boutons d'exports individuels
-    for idx, vb in enumerate(results):
-      display_market = vb.market.upper()
-      display_selection = vb.selection.upper()
-
-      if vb.market == "double_chance":
-        display_market = "DOUBLE CHANCE"
-        if vb.selection == "1X":
-          display_selection = f"1X ({home_team} OU NUL)"
-        elif vb.selection == "12":
-          display_selection = f"12 ({home_team} OU {away_team})"
-        elif vb.selection == "X2":
-          display_selection = f"X2 (NUL OU {away_team})"
-      elif vb.market == "home_goals":
-        display_market = f"BUTS {home_team.upper()}"
-      elif vb.market == "away_goals":
-        display_market = f"BUTS {away_team.upper()}"
-      elif vb.market.startswith("tirs_domicile_"):
-        display_market = f"TIRS {home_team.upper()}"
-      elif vb.market.startswith("tirs_exterieur_"):
-        display_market = f"TIRS {away_team.upper()}"
-      elif vb.market.startswith("sot_domicile_"):
-        display_market = f"SOT {home_team.upper()}"
-      elif vb.market.startswith("sot_exterieur_"):
-        display_market = f"SOT {away_team.upper()}"
-
-      st.success(f"🎯 **[{display_market}] Option : {display_selection}**")
-      st.write(
-          f"• Probabilité estimée : **{vb.model_prob:.1%}** | Cote saisie :"
-          f" **{vb.bookmaker_odds}**"
-      )
-      st.write(
-          f"• **EDGE : +{vb.edge:.1%}** | Mise Kelly (1/4) conseillée :"
-          f" **{vb.kelly_quart:.1%}**"
-      )
-
-      if st.button(f"📤 Exporter ce pari (#{idx+1})", key=f"export_{idx}"):
-        success = export_value_bet_to_sheet(
-            vb=vb,
-            match_date=selected_date,
-            match_mode=match_mode,
-            timing_paris=timing_paris,
-            league_name=league_country,
-            home_team=home_team,
-            away_team=away_team,
+    
+      st.subheader("💸 Value Bets Détectés")
+      if not results:
+        st.info(
+            "Aucun Value Bet détecté pour ce match avec vos critères actuels"
+            " (Edge ou Cotes hors limites)."
         )
-        if success:
-          st.success("✅ Pari exporté vers Google Sheets !")
-
-      st.divider()
+      else:
+        # -------------------------------------------------------------
+        # 1. EXPORT GLOBAL
+        # -------------------------------------------------------------
+        if st.button(
+            f"📤 Exporter les {len(results)} Value Bets vers Google Sheets",
+            type="primary",
+            use_container_width=True,
+        ):
+          success = export_all_value_bets_to_sheet(
+              results=results,
+              match_date=selected_date,
+              match_mode=match_mode,
+              timing_paris=timing_paris,
+              league_name=clean_league,  # <-- On utilise clean_league ici
+              home_team=home_team,
+              away_team=away_team,
+          )
+          if success:
+            st.success(
+                f"✅ {len(results)} Value Bets exportés avec succès vers Google"
+                " Sheets !"
+            )
+    
+        st.divider()
+    
+        # Plotly Scatter
+        df_res = pd.DataFrame([{
+            "Marché": vb.market.upper(),
+            "Sélection": vb.selection.upper(),
+            "Cote": vb.bookmaker_odds,
+            "Edge (%)": round(vb.edge * 100, 2),
+            "Probabilité (%)": round(vb.model_prob * 100, 1),
+        } for vb in results])
+    
+        fig = px.scatter(
+            df_res,
+            x="Cote",
+            y="Edge (%)",
+            color="Edge (%)",
+            hover_data=["Marché", "Sélection", "Probabilité (%)"],
+            title="📌 Répartition Cote vs Edge des opportunités détectées",
+            labels={"Cote": "Cote Bookmaker", "Edge (%)": "Edge / Value (%)"},
+            color_continuous_scale="RdYlGn",
+        )
+        fig.add_hline(
+            y=min_edge * 100,
+            line_dash="dash",
+            line_color="red",
+            annotation_text=f"Seuil Min ({min_edge*100:.1f}%)",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        st.divider()
+    
+        # -------------------------------------------------------------
+        # 2. EXPORTS INDIVIDUELS
+        # -------------------------------------------------------------
+        for idx, vb in enumerate(results):
+          display_market = vb.market.upper()
+          display_selection = vb.selection.upper()
+    
+          if vb.market == "double_chance":
+            display_market = "DOUBLE CHANCE"
+            if vb.selection == "1X":
+              display_selection = f"1X ({home_team} OU NUL)"
+            elif vb.selection == "12":
+              display_selection = f"12 ({home_team} OU {away_team})"
+            elif vb.selection == "X2":
+              display_selection = f"X2 (NUL OU {away_team})"
+          elif vb.market == "home_goals":
+            display_market = f"BUTS {home_team.upper()}"
+          elif vb.market == "away_goals":
+            display_market = f"BUTS {away_team.upper()}"
+          elif vb.market.startswith("tirs_domicile_"):
+            display_market = f"TIRS {home_team.upper()}"
+          elif vb.market.startswith("tirs_exterieur_"):
+            display_market = f"TIRS {away_team.upper()}"
+          elif vb.market.startswith("sot_domicile_"):
+            display_market = f"SOT {home_team.upper()}"
+          elif vb.market.startswith("sot_exterieur_"):
+            display_market = f"SOT {away_team.upper()}"
+    
+          st.success(f"🎯 **[{display_market}] Option : {display_selection}**")
+          st.write(
+              f"• Probabilité estimée : **{vb.model_prob:.1%}** | Cote saisie :"
+              f" **{vb.bookmaker_odds}**"
+          )
+          st.write(
+              f"• **EDGE : +{vb.edge:.1%}** | Mise Kelly (1/4) conseillée :"
+              f" **{vb.kelly_quart:.1%}**"
+          )
+    
+          if st.button(f"📤 Exporter ce pari (#{idx+1})", key=f"export_{idx}"):
+            success = export_value_bet_to_sheet(
+                vb=vb,
+                match_date=selected_date,
+                match_mode=match_mode,
+                timing_paris=timing_paris,
+                league_name=clean_league,  # <-- On utilise clean_league ici aussi !
+                home_team=home_team,
+                away_team=away_team,
+            )
+            if success:
+              st.success("✅ Pari exporté vers Google Sheets !")
+    
+          st.divider()
