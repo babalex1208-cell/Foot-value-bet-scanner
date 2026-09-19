@@ -98,7 +98,7 @@ def format_bet_details(market, selection, home_team, away_team):
       target_label = "(Ext)"
 
     sel_label = "Over" if selection == "over" else "Under"
-    bet_name = f"{sel_label} cut {stat_type} {target_label}"
+    bet_name = f"{sel_label} Cut {stat_type} {target_label}"
 
   return bet_name, cut_str
 
