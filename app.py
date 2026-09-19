@@ -1028,6 +1028,13 @@ if "analysis_data" in st.session_state:
   league_country = data["league_country"]
   min_edge = data["min_edge"]
 
+# ✂️ NETTOYAGE DE LA LIGUE : Ne garde que ce qui est après " - "
+  clean_league = (
+      league_country.split(" - ")[-1]
+      if " - " in str(league_country)
+      else league_country
+  )
+    
   st.header(f"📊 Rapport : {home_team} vs {away_team}")
   if match_mode == "En direct (Live)":
     st.caption(
