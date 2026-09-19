@@ -120,8 +120,8 @@ def build_sheets_row(
       str(vb.bookmaker_odds).replace(".", ","),  # H: Côtes prises
       "",  # I: Closing odds
       "",  # J: CLV
-      f"{vb.edge * 100:.1f} %".replace(".", ","),  # K: Edge
-      f"{vb.kelly_quart * 100:.1f} %".replace(".", ","),  # L: Quart Kelly
+      f"{vb.edge:.1f}".replace(".", ","),  # K: Edge
+      f"{vb.kelly_quart:.1f}".replace(".", ","),  # L: Quart Kelly
       "",  # M: Mise Paris
       "",  # N: Resultats paris
       "",  # O: Gains/Pertes
