@@ -43,6 +43,10 @@ TIME_DECAY_HALFLIFE_DAYS = 180
 # =========================================================
 # 2. FONCTIONS DE CONNEXION ET FORMATAGE GOOGLE SHEETS
 # =========================================================
+
+# ID du Google Sheet (à récupérer dans l'URL de ton navigateur)
+SPREADSHEET_ID = "11fcyQntgVPi2xjF0GXIeKAZkXrhRkwq2sfysO325kaI"
+
 def get_gspread_client():
   """Connexion à l'API Google Sheets via st.secrets."""
   creds_dict = dict(st.secrets["gcp_service_account"])
@@ -126,9 +130,11 @@ def build_sheets_row(
       "",  # P: Bankroll hebdomadaire
   ]
 
+# SPREADSHEET_ID doit être défini en haut de ton script :
+# SPREADSHEET_ID = "11fcyQntgVPi2xjF0GXIeKAZkXrhRkwq2sfysO325kaI"
+
 
 def export_all_value_bets_to_sheet(
-    sheet_name,
     results,
     match_date,
     match_mode,
@@ -136,11 +142,14 @@ def export_all_value_bets_to_sheet(
     league_name,
     home_team,
     away_team,
+    spreadsheet_id=SPREADSHEET_ID,
+    worksheet_name="Test-Export",
 ):
-  """Exporte la liste complète des Value Bets détectés en une seule requête."""
+  """Exporte la liste complète des Value Bets détectés en une seule requête via l'ID du Google Sheet."""
   try:
     gc = get_gspread_client()
-    sh = gc.open(sheet_name).sheet1
+    # Ouverture du fichier via son ID unique et ciblage de l'onglet
+    sh = gc.open_by_key(spreadsheet_id).worksheet(worksheet_name)
 
     rows_data = [
         build_sheets_row(
@@ -163,7 +172,6 @@ def export_all_value_bets_to_sheet(
 
 
 def export_value_bet_to_sheet(
-    sheet_name,
     vb,
     match_date,
     match_mode,
@@ -171,11 +179,14 @@ def export_value_bet_to_sheet(
     league_name,
     home_team,
     away_team,
+    spreadsheet_id=SPREADSHEET_ID,
+    worksheet_name="Test-Export",
 ):
-  """Exporte un seul Value Bet vers Google Sheets."""
+  """Exporte un seul Value Bet vers Google Sheets via l'ID du Google Sheet."""
   try:
     gc = get_gspread_client()
-    sh = gc.open(sheet_name).sheet1
+    # Ouverture du fichier via son ID unique et ciblage de l'onglet
+    sh = gc.open_by_key(spreadsheet_id).worksheet(worksheet_name)
 
     row_data = build_sheets_row(
         vb,
@@ -191,6 +202,8 @@ def export_value_bet_to_sheet(
   except Exception as e:
     st.error(f"Erreur lors de l'exportation vers Google Sheets : {e}")
     return False
+
+
 
 
 # ==========================================
@@ -996,21 +1009,18 @@ if st.button(
           type="primary",
           use_container_width=True,
       ):
-        success = export_all_value_bets_to_sheet(
-            sheet_name="Résultats app valuebet foor",
-            results=results,
-            match_date=selected_date,
-            match_mode=match_mode,
-            timing_paris=timing_paris,
-            league_name=LEAGUES[league_key]["country"],
-            home_team=home_team,
-            away_team=away_team,
-        )
-        if success:
-          st.success(
-              f"✅ {len(results)} Value Bets exportés avec succès vers Google"
-              " Sheets !"
+          success = export_all_value_bets_to_sheet(
+              results=results,
+              match_date=selected_date,
+              match_mode=match_mode,
+              timing_paris=timing_paris,
+              league_name=LEAGUES[league_key]["country"],
+              home_team=home_team,
+              away_team=away_team,
           )
+          if success:
+              st.success(f"✅ {len(results)} Value Bets exportés avec succès vers Google Sheets !")
+
 
       st.divider()
 
@@ -1080,7 +1090,6 @@ if st.button(
 
         if st.button(f"📤 Exporter ce pari (#{idx+1})", key=f"export_{idx}"):
           success = export_value_bet_to_sheet(
-              sheet_name="Résultats app valuebet foor",
               vb=vb,
               match_date=selected_date,
               match_mode=match_mode,
