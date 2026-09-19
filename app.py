@@ -681,7 +681,7 @@ if cat_shots:
     t_shots_line = c1.number_input(
         "Ligne de Tirs Match (ex: 24.5)", value=24.5, step=0.5
     )
-    t_shots_o = c1.number_input(
+    t_shots_o = c2.number_input(
         "Cote Over Tirs Match", value=1.85, step=0.01, key="ts_o"
     )
     t_shots_u = c3.number_input(
