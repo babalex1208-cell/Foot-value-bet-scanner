@@ -67,21 +67,19 @@ def format_bet_details(market, selection, home_team, away_team):
     mapping = {"1X": "1N", "12": "12", "X2": "N2"}
     bet_name = mapping.get(selection, selection)
   elif market == "over_under_2_5":
-    bet_name = "Over 2,5" if selection == "over" else "Under 2,5"
+    bet_name = "Over 2.5" if selection == "over" else "Under 2.5"
   elif market == "btts":
     bet_name = "BTTS Oui" if selection == "yes" else "BTTS Non"
   elif market == "home_goals":
     sel_clean = (
         selection.replace("over_", "Over ")
         .replace("under_", "Under ")
-        .replace("_", ",")
     )
     bet_name = f"{sel_clean} (Dom)"
   elif market == "away_goals":
     sel_clean = (
         selection.replace("over_", "Over ")
         .replace("under_", "Under ")
-        .replace("_", ",")
     )
     bet_name = f"{sel_clean} (Ext)"
   elif "tirs_" in market or "sot_" in market:
@@ -582,7 +580,7 @@ if df_fixtures is not None and not df_fixtures.empty:
     with col_t:
       timing_paris = st.selectbox(
           "⏱️ 3. Timing prise de pari",
-          options=["J-2", "J-1", "H-12 à H-2", "H-2 à H"],
+          options=["1. J-2", "2. J-1", "3. H-12 à H-2", "4. H-2 à H"],
       )
 
     if selected_fixture != "-- Sélectionner un match --":
