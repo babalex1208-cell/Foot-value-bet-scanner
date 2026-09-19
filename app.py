@@ -706,7 +706,7 @@ if cat_shots:
     st.markdown(f"### ✈️ Tirs Totaux Individuels : {away_team}")
     c1, c2, c3 = st.columns(3)
     a_shots_line = c1.number_input(
-        f"Ligne Tirs Totaux {away_team}", value)=None, step=0.5
+        f"Ligne Tirs Totaux {away_team}", value=None, step=0.5
     )
     a_shots_o = c2.number_input("Cote Over Tirs Ext", value=None, step=0.01)
     a_shots_u = c3.number_input("Cote Under Tirs Ext", value=None, step=0.01)
