@@ -6,5 +6,4 @@ numpy
 scipy
 requests
 cloudscraper
-plotly.express
-datetime 
+plotly 
