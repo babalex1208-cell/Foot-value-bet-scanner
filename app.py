@@ -991,14 +991,14 @@ if st.button(
               prob = preds_all[market][sel]
               edge = prob * odd - 1
 
-        if edge > min_edge and (cote_min <= odd <= cote_max):
-          b = odd - 1
-          kelly_quart = (
-              max(0.0, (b * prob - (1 - prob)) / b) * 0.25 if b > 0 else 0.0
-          )
-          results.append(
-              ValueBetResult(market, sel, prob, odd, edge, kelly_quart)
-          )
+          if edge > min_edge and (cote_min <= odd <= cote_max):
+              b = odd - 1
+              kelly_quart = (
+                 max(0.0, (b * prob - (1 - prob)) / b) * 0.25 if b > 0 else 0.0
+             )
+             results.append(
+                ValueBetResult(market, sel, prob, odd, edge, kelly_quart)
+             )
 
     results.sort(key=lambda x: x.edge, reverse=True)
 
