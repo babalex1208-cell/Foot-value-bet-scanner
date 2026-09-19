@@ -163,8 +163,8 @@ def export_all_value_bets_to_sheet(
         )
         for vb in results
     ]
-
-    sh.append_rows(rows_data, value_input_option="USER_ENTERED")
+    # table_range = "A1" force l'alignement à partir de la colonne A
+    sh.append_rows(rows_data, value_input_option="USER_ENTERED",table_range="A1")
     return True
   except Exception as e:
     st.error(f"Erreur lors de l'exportation globale vers Google Sheets : {e}")
@@ -197,7 +197,7 @@ def export_value_bet_to_sheet(
         home_team,
         away_team,
     )
-    sh.append_row(row_data, value_input_option="USER_ENTERED")
+    sh.append_row(row_data, value_input_option="USER_ENTERED",table_range="A1")
     return True
   except Exception as e:
     st.error(f"Erreur lors de l'exportation vers Google Sheets : {e}")
