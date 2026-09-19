@@ -648,7 +648,7 @@ if cat_buts_main:
   ):
     st.markdown("### 🏆 Résultat Match (1X2)")
     c1, c2, c3 = st.columns(3)
-    h_odd = c1.number_input("Cote 1 (Domicile)", value=2.00, step=0.01)
+    h_odd = c1.number_input("Cote 1 (Domicile)", value=None, step=0.01)
     d_odd = c2.number_input("Cote X (Nul)", value=3.40, step=0.01)
     a_odd = c3.number_input("Cote 2 (Extérieur)", value=3.80, step=0.01)
 
