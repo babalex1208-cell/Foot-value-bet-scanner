@@ -74,12 +74,14 @@ def format_bet_details(market, selection, home_team, away_team):
     sel_clean = (
         selection.replace("over_", "Over ")
         .replace("under_", "Under ")
+        .replace("_", ".")
     )
     bet_name = f"{sel_clean} (Dom)"
   elif market == "away_goals":
     sel_clean = (
         selection.replace("over_", "Over ")
         .replace("under_", "Under ")
+        .replace("_", ".")
     )
     bet_name = f"{sel_clean} (Ext)"
   elif "tirs_" in market or "sot_" in market:
