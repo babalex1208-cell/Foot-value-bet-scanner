@@ -557,7 +557,7 @@ if df_fixtures is not None and not df_fixtures.empty:
       filtered_fixtures = league_fixtures
 
     fixture_options = filtered_fixtures.apply(
-        lambda r: f"{r['HomeTeam']} / {r['AwayTeam']} ({r['Date']})", axis=1
+        lambda r: f"{r['HomeTeam']} / {r['AwayTeam']}", axis=1
     ).tolist()
 
     with col_m:
