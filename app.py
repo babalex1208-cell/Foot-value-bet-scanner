@@ -609,7 +609,7 @@ if df_fixtures is not None and not df_fixtures.empty:
 
 st.divider()
 
-col1, col2, col3 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 with col1:
   home_team = st.selectbox(
       "🏠 Équipe à Domicile", options=teams_list, index=idx_h
