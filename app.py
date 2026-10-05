@@ -619,7 +619,7 @@ if df_fixtures is not None and not df_fixtures.empty:
 st.divider()
 
 # Saisie / Ajustement manuel
-col1, col2, col3 = st.columns([2, 2, 1])
+col1, col2, col3, col4 = st.columns([2, 2, 1,1.2])
 
 with col1:
   home_team = st.selectbox(
@@ -644,7 +644,12 @@ with col3:
 
   # 🟢 AJOUT CRUCIAL : On met à jour la variable transmise à l'exportation
   selected_date = final_match_date
-
+    
+with col4:
+  timing_paris = st.selectbox(
+      "⏱️ Timing pari",
+      options=["1. J-2+", "2. J-1", "3. H-12 à H-2", "4. H-2 à H"],
+  )
       
 # --- LIVE ---
 live_minute, live_home_score, live_away_score = 0, 0, 0
