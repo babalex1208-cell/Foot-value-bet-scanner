@@ -556,7 +556,7 @@ idx_h, idx_a = 0, min(1, len(teams_list) - 1)
 
 # Valeurs par défaut de sécurité
 selected_date = datetime.now().strftime("%d/%m/%Y")
-timing_paris = "J-1"
+timing_paris = "1. J-2+"
 
 # 1. Date par défaut (aujourd'hui)
 match_date = datetime.today().date()
@@ -632,12 +632,18 @@ with col2:
   )
 
 with col3:
-  # Champ date : se pré-remplit avec la date du calendrier ou permet la saisie manuelle
   if isinstance(match_date, str):
-    # Si la date vient du CSV sous forme de string (ex: "24/10/2026")
-    st.text_input("📅 Date match", value=match_date, disabled=True)
+    # Si la date vient du fichier fixtures (déjà du texte)
+    final_match_date = match_date
+    st.text_input("📅 Date match", value=final_match_date, disabled=True)
   else:
-    match_date = st.date_input("📅 Date match", value=match_date)
+    # Si la date est choisie manuellement via le calendrier
+    user_date = st.date_input("📅 Date match", value=match_date)
+    # On la formate proprement en chaîne de caractères (ex: 25/10/2026)
+    final_match_date = user_date.strftime("%d/%m/%Y")
+
+  # 🟢 AJOUT CRUCIAL : On met à jour la variable transmise à l'exportation
+  selected_date = final_match_date
 
       
 # --- LIVE ---
