@@ -558,6 +558,9 @@ idx_h, idx_a = 0, min(1, len(teams_list) - 1)
 selected_date = datetime.now().strftime("%d/%m/%Y")
 timing_paris = "J-1"
 
+# 1. Date par défaut (aujourd'hui)
+match_date = datetime.date.today()
+
 if df_fixtures is not None and not df_fixtures.empty:
   code_fd = LEAGUES[league_key]["fd_code"]
   league_fixtures = df_fixtures[df_fixtures["Div"] == code_fd].copy()
@@ -573,8 +576,6 @@ if df_fixtures is not None and not df_fixtures.empty:
       selected_date_opt = st.selectbox(
           "📅 1. Date", options=["-- Toutes les dates --"] + available_dates
       )
-      if selected_date_opt != "-- Toutes les dates --":
-        selected_date = selected_date_opt
 
     if selected_date_opt != "-- Toutes les dates --":
       filtered_fixtures = league_fixtures[
@@ -606,7 +607,8 @@ if df_fixtures is not None and not df_fixtures.empty:
         idx_h = teams_list.index(h_sel)
       if a_sel in teams_list:
         idx_a = teams_list.index(a_sel)
-    # Récupération automatique de la date du match sélectionné
+
+      # Récupération automatique de la date du match sélectionné
       match_row = filtered_fixtures[
           (filtered_fixtures["HomeTeam"] == h_sel)
           & (filtered_fixtures["AwayTeam"] == a_sel)
@@ -616,15 +618,19 @@ if df_fixtures is not None and not df_fixtures.empty:
 
 st.divider()
 
-col1, col2, col3 = st.columns(3)
+# Saisie / Ajustement manuel
+col1, col2, col3 = st.columns([2, 2, 1])
+
 with col1:
   home_team = st.selectbox(
       "🏠 Équipe à Domicile", options=teams_list, index=idx_h
   )
+
 with col2:
   away_team = st.selectbox(
       "✈️ Équipe à l'Extérieur", options=teams_list, index=idx_a
   )
+
 with col3:
   # Champ date : se pré-remplit avec la date du calendrier ou permet la saisie manuelle
   if isinstance(match_date, str):
@@ -632,6 +638,7 @@ with col3:
     st.text_input("📅 Date match", value=match_date, disabled=True)
   else:
     match_date = st.date_input("📅 Date match", value=match_date)
+
       
 # --- LIVE ---
 live_minute, live_home_score, live_away_score = 0, 0, 0
