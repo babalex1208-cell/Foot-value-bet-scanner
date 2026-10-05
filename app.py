@@ -559,7 +559,7 @@ selected_date = datetime.now().strftime("%d/%m/%Y")
 timing_paris = "J-1"
 
 # 1. Date par défaut (aujourd'hui)
-match_date = datetime.date.today()
+match_date = datetime.today().date()
 
 if df_fixtures is not None and not df_fixtures.empty:
   code_fd = LEAGUES[league_key]["fd_code"]
