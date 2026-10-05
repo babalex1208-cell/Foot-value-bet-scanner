@@ -606,6 +606,13 @@ if df_fixtures is not None and not df_fixtures.empty:
         idx_h = teams_list.index(h_sel)
       if a_sel in teams_list:
         idx_a = teams_list.index(a_sel)
+    # Récupération automatique de la date du match sélectionné
+      match_row = filtered_fixtures[
+          (filtered_fixtures["HomeTeam"] == h_sel)
+          & (filtered_fixtures["AwayTeam"] == a_sel)
+      ]
+      if not match_row.empty:
+        match_date = match_row["Date"].values[0]
 
 st.divider()
 
