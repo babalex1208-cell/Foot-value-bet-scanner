@@ -618,7 +618,14 @@ with col2:
   away_team = st.selectbox(
       "✈️ Équipe à l'Extérieur", options=teams_list, index=idx_a
   )
-
+with col3:
+  # Champ date : se pré-remplit avec la date du calendrier ou permet la saisie manuelle
+  if isinstance(match_date, str):
+    # Si la date vient du CSV sous forme de string (ex: "24/10/2026")
+    st.text_input("📅 Date match", value=match_date, disabled=True)
+  else:
+    match_date = st.date_input("📅 Date match", value=match_date)
+      
 # --- LIVE ---
 live_minute, live_home_score, live_away_score = 0, 0, 0
 if match_mode == "En direct (Live)":
