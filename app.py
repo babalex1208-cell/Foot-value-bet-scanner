@@ -13,6 +13,7 @@ import requests
 from scipy.optimize import minimize
 from scipy.stats import nbinom, poisson
 import streamlit as st
+import re
 
 # ==========================================
 # 1. CONFIGURATION (Doit être la toute première commande Streamlit)
@@ -209,10 +210,6 @@ def export_value_bet_to_sheet(
   except Exception as e:
     st.error(f"Erreur lors de l'exportation vers Google Sheets : {e}")
     return False
-
-@st.cache_data(ttl=300)
-
-import re
 
 
 @st.cache_data(ttl=300)
