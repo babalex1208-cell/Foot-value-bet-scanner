@@ -14,6 +14,8 @@ from scipy.optimize import minimize
 from scipy.stats import nbinom, poisson
 import streamlit as st
 import re
+import plotly.graph_objects as go
+from fpdf import FPDF
 
 # ==========================================
 # 1. CONFIGURATION (Doit être la toute première commande Streamlit)
@@ -360,9 +362,198 @@ def get_sidebar_metrics(
   except Exception:
     return None
 
+@st.cache_data(ttl=60)
+def fetch_raw_data_from_sheets(
+    spreadsheet_id=SPREADSHEET_ID, worksheet_name="Suivi Value Bets Global"
+):
+  """Récupère l'ensemble des lignes du Google Sheet sous forme de DataFrame brut."""
+  try:
+    gc = get_gspread_client()
+    sh = gc.open_by_key(spreadsheet_id).worksheet(worksheet_name)
+    data = sh.get_all_values()
+
+    if not data or len(data) < 2:
+      return pd.DataFrame()
+
+    # Détection dynamique de la ligne d'en-tête "Date"
+    header_idx = -1
+    for i, row in enumerate(data):
+      if row and str(row[0]).strip().lower() == "date":
+        header_idx = i
+        break
+
+    if header_idx != -1:
+      df = pd.DataFrame(data[header_idx + 1 :], columns=data[header_idx])
+    else:
+      df = pd.DataFrame(data[1:])
+
+    return df
+  except Exception as e:
+    st.error(f"Erreur lors de la récupération du Google Sheet : {e}")
+    return pd.DataFrame()
 
 # ==========================================
-# 3. LOGIQUE MATHÉMATIQUE (DIXON-COLES & NBINOM)
+# 3. FONCTIONS HELPER DE TRAITEMENT
+# ==========================================
+
+def prepare_dataframe(df_raw):
+  """Prépare et nettoie le DataFrame brut de Google Sheets pour tous les modules."""
+  if df_raw is None or df_raw.empty:
+    return pd.DataFrame()
+
+  df = df_raw.copy()
+
+  # Indexation des colonnes (selon la structure Google Sheets)
+  col_date, col_league, col_paris = 0, 3, 5
+  col_odds, col_edge, col_mises, col_gains_pertes = 7, 10, 12, 14
+
+  # Conversion des dates avec parsing souple
+  raw_dates = df[col_date].astype(str).str.strip().str.split(" ").str[0]
+  df["parsed_date"] = pd.to_datetime(raw_dates, dayfirst=True, errors="coerce")
+  df = df.dropna(subset=["parsed_date"]).sort_values("parsed_date").copy()
+
+  # Fonction de nettoyage numérique
+  def clean_num(series):
+    s = (
+        series.astype(str)
+        .str.replace("€", "", regex=False)
+        .str.replace("%", "", regex=False)
+        .str.replace(" ", "", regex=False)
+        .str.replace("\xa0", "", regex=False)
+        .str.replace(",", ".", regex=False)
+        .str.strip()
+    )
+    extracted = s.str.extract(r"(-?\d+\.?\d*)")[0]
+    return pd.to_numeric(extracted, errors="coerce").fillna(0.0)
+
+  df["league"] = df[col_league].astype(str).str.strip()
+  df["pari"] = df[col_paris].astype(str).str.strip()
+  df["odds_num"] = clean_num(df[col_odds])
+  df["edge_num"] = clean_num(df[col_edge])
+  df["mises_num"] = clean_num(df[col_mises])
+  df["gains_num"] = clean_num(df[col_gains_pertes])
+
+  # Normalisation de l'edge (si exprimé en décimal vs pourcentage)
+  df["edge_pct"] = df["edge_num"].apply(
+      lambda x: x if abs(x) > 1.0 else x * 100.0
+  )
+
+  # Catégorisation simplifiée du marché
+  df["type_marche"] = df["pari"].apply(
+      lambda x: (
+          "Tirs & Cadrés"
+          if any(k in str(x).lower() for k in ["shot", "sot", "tir"])
+          else "Buts & Match"
+      )
+  )
+
+  return df
+
+
+def filter_by_period(df, period_choice):
+  """Filtre le DataFrame selon la période choisie dans le sélecteur."""
+  if df.empty:
+    return df
+
+  now = pd.Timestamp.now()
+
+  if period_choice == "7 Derniers Jours":
+    cutoff = now - pd.Timedelta(days=7)
+    return df[df["parsed_date"] >= cutoff].copy()
+  elif period_choice == "30 Derniers Jours":
+    cutoff = now - pd.Timedelta(days=30)
+    return df[df["parsed_date"] >= cutoff].copy()
+  elif period_choice == "Mois en Cours (MTD)":
+    start_of_month = pd.Timestamp(now.year, now.month, 1)
+    return df[df["parsed_date"] >= start_of_month].copy()
+  elif period_choice == "Année en Cours (YTD)":
+    start_of_year = pd.Timestamp(now.year, 1, 1)
+    return df[df["parsed_date"] >= start_of_year].copy()
+  else:  # "Tout l'Historique"
+    return df.copy()
+
+
+# ==========================================
+# 4. GENERATEUR DE PDF (BILAN)
+# ==========================================
+
+
+def generate_pdf_report(df_filtered, period_label):
+  """Génère un rapport PDF élégant en mémoire."""
+  pdf = FPDF()
+  pdf.add_page()
+  pdf.set_font("Helvetica", "B", 16)
+
+  # Titre
+  pdf.cell(
+      0, 10, f"Bilan de Performance Value Bets - {period_label}", ln=True, align="C"
+  )
+  pdf.set_font("Helvetica", "", 10)
+  pdf.cell(
+      0,
+      10,
+      f'Généré le {pd.Timestamp.now().strftime("%d/%m/%Y à %H:%M")}',
+      ln=True,
+      align="C",
+  )
+  pdf.ln(5)
+
+  # Métriques clés
+  total_vbs = len(df_filtered)
+  total_mises = df_filtered["mises_num"].sum() if total_vbs > 0 else 0.0
+  total_pnl = df_filtered["gains_num"].sum() if total_vbs > 0 else 0.0
+  roi_reel = (total_pnl / total_mises * 100) if total_mises > 0 else 0.0
+  avg_edge = df_filtered["edge_pct"].mean() if total_vbs > 0 else 0.0
+
+  pdf.set_font("Helvetica", "B", 12)
+  pdf.cell(0, 8, "Résumé Global :", ln=True)
+  pdf.set_font("Helvetica", "", 11)
+
+  pdf.cell(100, 7, f"Nombre total de Value Bets : {total_vbs}", ln=True)
+  pdf.cell(100, 7, f"Total Mises : {total_mises:,.2f} EUR", ln=True)
+  pdf.cell(100, 7, f"P&L Net Réel : {total_pnl:+,.2f} EUR", ln=True)
+  pdf.cell(100, 7, f"ROI Réel : {roi_reel:+.2f} %", ln=True)
+  pdf.cell(100, 7, f"Edge Moyen Théorique : +{avg_edge:.2f} %", ln=True)
+  pdf.ln(8)
+
+  # Tableau résumé par Ligue (Top 5)
+  if total_vbs > 0:
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, "Top Ligues par Volume :", ln=True)
+    pdf.set_font("Helvetica", "B", 10)
+
+    # Entêtes tableau
+    pdf.cell(70, 7, "Ligue", border=1)
+    pdf.cell(30, 7, "Bets", border=1, align="C")
+    pdf.cell(45, 7, "Mises (€)", border=1, align="R")
+    pdf.cell(45, 7, "P&L (€)", border=1, align="R")
+    pdf.ln()
+
+    pdf.set_font("Helvetica", "", 10)
+    league_summary = (
+        df_filtered.groupby("league")
+        .agg({"mises_num": "sum", "gains_num": "sum", "pari": "count"})
+        .reset_index()
+        .sort_values("pari", ascending=False)
+        .head(8)
+    )
+
+    for _, row in league_summary.iterrows():
+      pdf.cell(70, 7, str(row["league"])[:30], border=1)
+      pdf.cell(30, 7, str(row["pari"]), border=1, align="C")
+      pdf.cell(45, 7, f"{row['mises_num']:.2f}", border=1, align="R")
+      pdf.cell(45, 7, f"{row['gains_num']:+.2f}", border=1, align="R")
+      pdf.ln()
+
+  # Output vers buffer mémoire
+  pdf_buffer = io.BytesIO()
+  pdf.output(pdf_buffer)
+  pdf_buffer.seek(0)
+  return pdf_buffer.getvalue()
+
+
+# ==========================================
+# 5. LOGIQUE MATHÉMATIQUE (DIXON-COLES & NBINOM)
 # ==========================================
 def time_weights(dates, halflife_days):
   days_ago = (dates.max() - dates).dt.days.values
@@ -533,7 +724,7 @@ class DixonColesModel:
 
 
 # ==========================================
-# 4. GESTION DES DONNÉES DE MATCHS
+# 6. GESTION DES DONNÉES DE MATCHS
 # ==========================================
 @dataclass
 class ValueBetResult:
@@ -634,7 +825,7 @@ def train_all_models(df):
 
 
 # ==========================================
-# 5. SIDEBAR (FILTRES & METRIQUES)
+# 7. SIDEBAR (FILTRES & METRIQUES)
 # ==========================================
 st.sidebar.header("🎯 Mode d'Analyse")
 match_mode = st.sidebar.radio(
@@ -645,6 +836,15 @@ st.sidebar.header("📋 Catégories à Analyser")
 cat_buts_main = st.sidebar.checkbox("⚽ Marchés Buts Principaux", value=True)
 cat_buts_team = st.sidebar.checkbox("🥅 Buts par Équipe", value=True)
 cat_shots = st.sidebar.checkbox("📊 Tirs & Tirs Cadrés", value=True)
+
+st.sidebar.header("⚙️ Filtre de Cotes")
+cote_min, cote_max = st.sidebar.slider(
+    "Plage de cotes autorisées",
+    min_value=1.10,
+    max_value=5.00,
+    value=(1.50, 2.30),
+    step=0.05
+)
 
 st.sidebar.divider()
 
@@ -725,10 +925,125 @@ with fin_col2:
 
 st.sidebar.divider()
 
-cote_min, cote_max = 1.50, 2.30
+# ==========================================
+# 3. INTERFACE PRINCIPALE & NOUVEAUX MODULES
+# ==========================================
+
+# A. SÉLECTEUR DE PÉRIODE GLISSANTE
+st.subheader("🗓️ Filtre Temporel & Période Glissante")
+period_choice = st.selectbox(
+    "Choisir l'horizon d'analyse :",
+    [
+        "7 Derniers Jours",
+        "30 Derniers Jours",
+        "Mois en Cours (MTD)",
+        "Année en Cours (YTD)",
+        "Tout l'Historique",
+    ],
+    index=0,
+)
+
+# Chargement et préparation globale
+df_raw = fetch_raw_data_from_sheets()  # Ta fonction existante d'accès Sheet
+df_all = prepare_dataframe(df_raw)
+df_filtered = filter_by_period(df_all, period_choice)
+
+# B. GRAPHIQUE P&L RÉEL VS P&L THÉORIQUE (VARIANCE)
+st.markdown("---")
+st.subheader("📈 P&L Réel vs P&L Théorique (Courbe de Variance)")
+
+if not df_filtered.empty:
+  # Calcul du cumulatif
+  df_filtered["cum_mises"] = df_filtered["mises_num"].cumsum()
+  df_filtered["pnl_real_cum"] = df_filtered["gains_num"].cumsum()
+  # Gain théorique attendu = Mise * (Edge / 100)
+  df_filtered["pnl_theo_step"] = df_filtered["mises_num"] * (
+      df_filtered["edge_pct"] / 100.0
+  )
+  df_filtered["pnl_theo_cum"] = df_filtered["pnl_theo_step"].cumsum()
+
+  fig_pnl = go.Figure()
+
+  # Courbe Réelle
+  fig_pnl.add_trace(
+      go.Scatter(
+          x=df_filtered["parsed_date"],
+          y=df_filtered["pnl_real_cum"],
+          mode="lines+markers",
+          name="P&L Réel (€)",
+          line=dict(color="#00CC96", width=2.5),
+      )
+  )
+
+  # Courbe Théorique
+  fig_pnl.add_trace(
+      go.Scatter(
+          x=df_filtered["parsed_date"],
+          y=df_filtered["pnl_theo_cum"],
+          mode="lines",
+          name="P&L Théorique Attendu (€)",
+          line=dict(color="#AB63FA", width=2, dash="dash"),
+      )
+  )
+
+  fig_pnl.update_layout(
+      template="plotly_dark",
+      xaxis_title="Date",
+      yaxis_title="Euros (€)",
+      legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+      margin=dict(l=20, r=20, t=30, b=20),
+  )
+
+  st.plotly_chart(fig_pnl, use_container_width=True)
+else:
+  st.info("Aucun pari trouvé sur la période sélectionnée.")
+
+# C. MATRICE DE RENTABILITÉ / HEATMAP (LIGUE X MARCHÉ)
+st.markdown("---")
+st.subheader("🔥 Matrice de Rentabilité (Ligue × Type de Marché)")
+
+if not df_filtered.empty:
+  pivot_pnl = df_filtered.pivot_table(
+      index="league",
+      columns="type_marche",
+      values="gains_num",
+      aggfunc="sum",
+      fill_value=0.0,
+  )
+
+  if not pivot_pnl.empty:
+    fig_heatmap = px.imshow(
+        pivot_pnl,
+        text_auto=".2f",
+        aspect="auto",
+        color_continuous_scale="RdYlGn",
+        title="Gain Net (€) par Ligue et Marché",
+    )
+    fig_heatmap.update_layout(
+        template="plotly_dark", xaxis_title="Marché", yaxis_title="Ligue"
+    )
+    st.plotly_chart(fig_heatmap, use_container_width=True)
+else:
+  st.info("Pas assez de données pour afficher la heatmap.")
+
+# D. EXPORT PDF DU BILAN
+st.markdown("---")
+st.subheader("📄 Exportation du Bilan")
+
+if not df_filtered.empty:
+  pdf_bytes = generate_pdf_report(df_filtered, period_choice)
+  st.download_button(
+      label=f"📥 Télécharger le Bilan PDF ({period_choice})",
+      data=pdf_bytes,
+      file_name=f"bilan_value_bets_{period_choice.lower().replace(' ', '_')}.pdf",
+      mime="application/pdf",
+  )
+else:
+  st.warning("Aucune donnée à exporter pour cette période.")
+
 
 # ==========================================
-# 6. PAGE PRINCIPALE & SELECTIONS
+# 8. PAGE PRINCIPALE & SELECTIONS
 # ==========================================
 st.title("🏆 Scanner de Value Bets Pro (Buts & Tirs)")
 
@@ -876,7 +1191,7 @@ if match_mode == "En direct (Live)":
 st.divider()
 
 # ==========================================
-# 7. SAISIE DES COTES
+# 9. SAISIE DES COTES
 # ==========================================
 st.subheader("2️⃣ Saisissez les cotes du bookmaker")
 
@@ -984,11 +1299,11 @@ min_edge = (
 )
 
 # ==========================================
-# 8. MOTEUR D'ANALYSE & AFFICHAGE
+# 10. MOTEUR D'ANALYSE & AFFICHAGE
 # ==========================================
-# -----------------------------------------------------------------------------
-# BOUTON DE LANCEMENT DE L'ANALYSE
-# -----------------------------------------------------------------------------
+
+# BOUTON DE LANCEMENT DE L'ANALYSE 
+
 if st.button(
     "🚀 Lancer l'Analyse Complète", type="primary", use_container_width=True
 ):
@@ -1266,7 +1581,7 @@ if st.button(
     }
 
 # -----------------------------------------------------------------------------
-# 2. AFFICHAGE DU RAPPORT & BOUTONS D'EXPORT (SÉPARÉS DU BOUTON PRINCIPAL)
+# 11. AFFICHAGE DU RAPPORT & BOUTONS D'EXPORT (SÉPARÉS DU BOUTON PRINCIPAL)
 # -----------------------------------------------------------------------------
 if "analysis_data" in st.session_state:
   data = st.session_state["analysis_data"]
