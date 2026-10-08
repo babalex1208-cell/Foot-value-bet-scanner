@@ -212,49 +212,57 @@ def export_value_bet_to_sheet(
     return False
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=60)  # Réduit à 60 secondes pour une réactivité optimale
 def get_sidebar_metrics(
     spreadsheet_id=SPREADSHEET_ID, worksheet_name="Suivi Value Bets Global"
 ):
-  """Lit le Google Sheet et calcule les statistiques strictement sur les 7 derniers jours.
-
-  Si aucun pari n'est trouvé sur 7j, retourne 0 sans basculer sur l'historique
-  complet.
-  """
+  """Lit l'onglet spécifié du Google Sheet et calcule les statistiques sur les 7 derniers jours."""
   try:
     gc = get_gspread_client()
     sh = gc.open_by_key(spreadsheet_id).worksheet(worksheet_name)
     data = sh.get_all_values()
 
-    if len(data) <= 1:
+    if not data or len(data) < 2:
       return None
 
-    df_bets = pd.DataFrame(data[1:])
+    # 1. RECHERCHE DYNAMIQUE DE LA LIGNE D'EN-TÊTE ("Date")
+    header_idx = -1
+    for i, row in enumerate(data):
+      if row and str(row[0]).strip().lower() == "date":
+        header_idx = i
+        break
+
+    if header_idx != -1 and header_idx + 1 < len(data):
+      rows_data = data[header_idx + 1 :]
+    else:
+      rows_data = data[1:]
+
+    df_bets = pd.DataFrame(rows_data)
+    if df_bets.empty:
+      return None
 
     # Indexation des colonnes (A=0, D=3, F=5, H=7, K=10, M=12, O=14)
-    col_date = 0
-    col_league = 3
-    col_paris = 5
-    col_odds = 7
-    col_edge = 10
-    col_mises = 12
-    col_gains_pertes = 14
+    col_date, col_league, col_paris = 0, 3, 5
+    col_odds, col_edge, col_mises, col_gains_pertes = 7, 10, 12, 14
 
-    # 1. PARSING DES DATES & EXCLUSION DES LIGNES SANS DATE VALIDE
+    # 2. PARSING SOUPLE ET ROBUSTE DES DATES
     raw_dates = df_bets[col_date].astype(str).str.strip().str.split(" ").str[0]
     df_bets["parsed_date"] = pd.to_datetime(
         raw_dates, dayfirst=True, errors="coerce"
     )
 
-    # On ne garde que les lignes qui ont une vraie date (exclut la ligne 4 bankroll ou entêtes)
+    # Conservation uniquement des lignes avec une date valide
     df_bets = df_bets.dropna(subset=["parsed_date"]).copy()
 
     now = pd.Timestamp.now()
     cutoff_7j = now - pd.Timedelta(days=7)
     cutoff_14j = now - pd.Timedelta(days=14)
 
-    # Filtrage des 7 derniers jours et de la semaine précédente (S-1)
-    df_7j = df_bets[df_bets["parsed_date"] >= cutoff_7j].copy()
+    # Filtrage strict sur les 7 derniers jours
+    df_7j = df_bets[
+        (df_bets["parsed_date"] >= cutoff_7j)
+        & (df_bets["parsed_date"] <= now)
+    ].copy()
     df_s1 = df_bets[
         (df_bets["parsed_date"] >= cutoff_14j)
         & (df_bets["parsed_date"] < cutoff_7j)
@@ -264,8 +272,8 @@ def get_sidebar_metrics(
     total_s1 = len(df_s1)
     delta_vbs = total_vbs - total_s1
 
-    # 🟢 S'IL N'Y A AUCUN PARI DANS LES 7 DERNIERS JOURS : RETOUR À ZERO
-    if df_7j.empty:
+    # 3. SI AUCUN PARI DANS LES 7 DERNIERS JOURS : RETOUR À ZERO STRICT
+    if total_vbs == 0:
       return {
           "total_vbs": 0,
           "delta_vbs": delta_vbs,
@@ -280,7 +288,7 @@ def get_sidebar_metrics(
           "roi_reel": 0.0,
       }
 
-    # 2. NETTOYAGE DES NOMBRES SI PARIS PRÉSENTS
+    # 4. NETTOYAGE ET CONVERSIONS NUMÉRIQUES
     def clean_num_series(series):
       s = (
           series.astype(str)
@@ -312,7 +320,6 @@ def get_sidebar_metrics(
     odds_valid = df_7j[df_7j["odds_num"] > 1.0]["odds_num"]
     avg_odds = odds_valid.mean() if not odds_valid.empty else 0.0
 
-    # Totaux financiers
     total_mises = df_7j["mises_num"].sum()
     total_gains_pertes = df_7j["gains_num"].sum()
     roi_reel = (
