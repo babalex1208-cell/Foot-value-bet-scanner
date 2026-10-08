@@ -216,7 +216,11 @@ def export_value_bet_to_sheet(
 def get_sidebar_metrics(
     spreadsheet_id=SPREADSHEET_ID, worksheet_name="Suivi Value Bets Global"
 ):
-  """Version corrigée : gère les pourcentages déjà formatés, filtre les lignes de résumés/bankroll et sécurise le Top Ligue."""
+  """Lit le Google Sheet et calcule les statistiques strictement sur les 7 derniers jours.
+
+  Si aucun pari n'est trouvé sur 7j, retourne 0 sans basculer sur l'historique
+  complet.
+  """
   try:
     gc = get_gspread_client()
     sh = gc.open_by_key(spreadsheet_id).worksheet(worksheet_name)
@@ -225,7 +229,6 @@ def get_sidebar_metrics(
     if len(data) <= 1:
       return None
 
-    # Création du DataFrame (sans l'en-tête)
     df_bets = pd.DataFrame(data[1:])
 
     # Indexation des colonnes (A=0, D=3, F=5, H=7, K=10, M=12, O=14)
@@ -237,26 +240,20 @@ def get_sidebar_metrics(
     col_mises = 12
     col_gains_pertes = 14
 
-    # 1. FILTRAGE DES LIGNES VALIDES (Ignorer les lignes totalement vides)
-    valid_rows_mask = (df_bets[col_date].astype(str).str.strip() != "") | (
-        df_bets[col_paris].astype(str).str.strip() != ""
-    )
-    df_bets = df_bets[valid_rows_mask].copy()
-
-    if df_bets.empty:
-      return None
-
-    # 2. PARSING DES DATES
+    # 1. PARSING DES DATES & EXCLUSION DES LIGNES SANS DATE VALIDE
     raw_dates = df_bets[col_date].astype(str).str.strip().str.split(" ").str[0]
     df_bets["parsed_date"] = pd.to_datetime(
         raw_dates, dayfirst=True, errors="coerce"
     )
 
+    # On ne garde que les lignes qui ont une vraie date (exclut la ligne 4 bankroll ou entêtes)
+    df_bets = df_bets.dropna(subset=["parsed_date"]).copy()
+
     now = pd.Timestamp.now()
     cutoff_7j = now - pd.Timedelta(days=7)
     cutoff_14j = now - pd.Timedelta(days=14)
 
-    # Filtrage 7 derniers jours vs Semaine précédente
+    # Filtrage des 7 derniers jours et de la semaine précédente (S-1)
     df_7j = df_bets[df_bets["parsed_date"] >= cutoff_7j].copy()
     df_s1 = df_bets[
         (df_bets["parsed_date"] >= cutoff_14j)
@@ -267,12 +264,23 @@ def get_sidebar_metrics(
     total_s1 = len(df_s1)
     delta_vbs = total_vbs - total_s1
 
-    # Si aucun pari sur les 7 derniers jours, on utilise tout l'historique
+    # 🟢 S'IL N'Y A AUCUN PARI DANS LES 7 DERNIERS JOURS : RETOUR À ZERO
     if df_7j.empty:
-      df_7j = df_bets.copy()
-      total_vbs = len(df_7j)
+      return {
+          "total_vbs": 0,
+          "delta_vbs": delta_vbs,
+          "avg_edge": 0.0,
+          "avg_odds": 0.0,
+          "expected_roi": 0.0,
+          "top_league": "Aucun pari (7j)",
+          "pct_buts": 0.5,
+          "pct_tirs": 0.5,
+          "total_mises": 0.0,
+          "total_gains_pertes": 0.0,
+          "roi_reel": 0.0,
+      }
 
-    # 3. FONCTION DE NETTOYAGE NUMÉRIQUE
+    # 2. NETTOYAGE DES NOMBRES SI PARIS PRÉSENTS
     def clean_num_series(series):
       s = (
           series.astype(str)
@@ -286,13 +294,12 @@ def get_sidebar_metrics(
       extracted = s.str.extract(r"(-?\d+\.?\d*)")[0]
       return pd.to_numeric(extracted, errors="coerce").fillna(0.0)
 
-    # 4. CONVERSIONS
     df_7j["odds_num"] = clean_num_series(df_7j[col_odds])
     df_7j["edge_num"] = clean_num_series(df_7j[col_edge])
     df_7j["mises_num"] = clean_num_series(df_7j[col_mises])
     df_7j["gains_num"] = clean_num_series(df_7j[col_gains_pertes])
 
-    # CORRECTION DE L'EDGE : Détecte si l'edge est déjà en % (ex: 30.74) ou en décimal (ex: 0.3074)
+    # Edge (Ajustement facteur 100 si nécessaire)
     edges = df_7j[df_7j["edge_num"] != 0]["edge_num"]
     if not edges.empty:
       mean_raw_edge = edges.mean()
@@ -302,7 +309,6 @@ def get_sidebar_metrics(
     else:
       avg_edge = 0.0
 
-    # Cotes moyennes
     odds_valid = df_7j[df_7j["odds_num"] > 1.0]["odds_num"]
     avg_odds = odds_valid.mean() if not odds_valid.empty else 0.0
 
@@ -313,7 +319,7 @@ def get_sidebar_metrics(
         (total_gains_pertes / total_mises) * 100 if total_mises > 0 else 0.0
     )
 
-    # 5. NETTOYAGE DU TOP LIGUE (Exclure les lignes contenant '€', Bankroll, Total, etc.)
+    # Top Ligue
     leagues = df_7j[col_league].astype(str).str.strip()
     clean_leagues = leagues[
         ~leagues.str.contains("€|Total|Bankroll|Live|Avant", case=False)
@@ -323,7 +329,7 @@ def get_sidebar_metrics(
         clean_leagues.mode().iloc[0] if not clean_leagues.empty else "N/A"
     )
 
-    # 6. RÉPARTITION MARCHÉS
+    # Répartition Buts vs Tirs
     tirs_mask = df_7j[col_paris].astype(str).str.contains(
         "Cut|shots|sot|Tirs", case=False
     )
