@@ -211,40 +211,39 @@ def export_value_bet_to_sheet(
     return False
 
 @st.cache_data(ttl=300)
+
+import re
+
+
+@st.cache_data(ttl=300)
 def get_sidebar_metrics(
     spreadsheet_id=SPREADSHEET_ID, worksheet_name="Suivi Value Bets Global"
 ):
-  """Lit le Google Sheet et calcule les statistiques dynamiques de la sidebar (y compris Mises et Gains/Pertes)."""
+  """Version sécurisée : nettoie le symbole €, les espaces et gère les formats de dates flexibles."""
   try:
     gc = get_gspread_client()
     sh = gc.open_by_key(spreadsheet_id).worksheet(worksheet_name)
     data = sh.get_all_values()
 
-    # Sécurité si la feuille est vide ou contient uniquement l'en-tête
     if len(data) <= 1:
       return None
 
     df_bets = pd.DataFrame(data[1:])
 
-    # Indexation des colonnes (A=0, D=3, F=5, H=7, K=10, M=12, O=14)
-    col_date = 0
-    col_league = 3
-    col_paris = 5
-    col_odds = 7
-    col_edge = 10
-    col_mises = 12
-    col_gains_pertes = 14
+    # Offsets des colonnes (A=0, D=3, F=5, H=7, K=10, M=12, O=14)
+    col_date, col_league, col_paris = 0, 3, 5
+    col_odds, col_edge, col_mises, col_gains_pertes = 7, 10, 12, 14
 
-    # Parsing des dates (Col A)
+    # 1. PARSING NETTOYÉ DES DATES
+    raw_dates = df_bets[col_date].astype(str).str.strip().str.split(" ").str[0]
     df_bets["parsed_date"] = pd.to_datetime(
-        df_bets[col_date], dayfirst=True, errors="coerce"
+        raw_dates, dayfirst=True, errors="coerce"
     )
 
     now = pd.Timestamp.now()
     cutoff_7j = now - pd.Timedelta(days=7)
     cutoff_14j = now - pd.Timedelta(days=14)
 
-    # Filtrage des 7 derniers jours vs semaine précédente
     df_7j = df_bets[df_bets["parsed_date"] >= cutoff_7j].copy()
     df_s1 = df_bets[
         (df_bets["parsed_date"] >= cutoff_14j)
@@ -255,49 +254,45 @@ def get_sidebar_metrics(
     total_s1 = len(df_s1)
     delta_vbs = total_vbs - total_s1
 
-    # Repli sur l'historique complet si aucun pari sur les 7 derniers jours
     if df_7j.empty:
       df_7j = df_bets.copy()
 
-    # --- NETTOYAGE ET CONVERSIONS NUMÉRIQUES ---
-    # Cotes (Col H) & Edge (Col K)
-    df_7j["odds_num"] = pd.to_numeric(
-        df_7j[col_odds].astype(str).str.replace(",", "."), errors="coerce"
-    )
-    df_7j["edge_num"] = pd.to_numeric(
-        df_7j[col_edge].astype(str).str.replace(",", "."), errors="coerce"
-    )
+    # 2. FONCTION DE NETTOYAGE DES NOMBRES (Nettoie '€', espaces et virgules)
+    def clean_num_series(series):
+      s = (
+          series.astype(str)
+          .str.replace("€", "", regex=False)
+          .str.replace(" ", "", regex=False)
+          .str.replace("\xa0", "", regex=False)  # Espaces insécables
+          .str.replace(",", ".", regex=False)
+          .str.strip()
+      )
+      # Extrait la partie numérique (ex: "+15.50" -> "15.50")
+      extracted = s.str.extract(r"(-?\d+\.?\d*)")[0]
+      return pd.to_numeric(extracted, errors="coerce").fillna(0.0)
 
-    # Mises (Col M) & Gains/Pertes (Col O)
-    df_7j["mises_num"] = pd.to_numeric(
-        df_7j[col_mises].astype(str).str.replace(",", "."), errors="coerce"
-    ).fillna(0.0)
-    df_7j["gains_num"] = pd.to_numeric(
-        df_7j[col_gains_pertes].astype(str).str.replace(",", "."), errors="coerce"
-    ).fillna(0.0)
+    # 3. NETTOYAGE ET CALCULS
+    df_7j["odds_num"] = clean_num_series(df_7j[col_odds])
+    df_7j["edge_num"] = clean_num_series(df_7j[col_edge])
+    df_7j["mises_num"] = clean_num_series(df_7j[col_mises])
+    df_7j["gains_num"] = clean_num_series(df_7j[col_gains_pertes])
 
-    # --- CALCULS STATISTIQUES ---
-    avg_odds = (
-        df_7j["odds_num"].mean() if not df_7j["odds_num"].dropna().empty else 0.0
-    )
-    avg_edge = (
-        (df_7j["edge_num"].mean() * 100)
-        if not df_7j["edge_num"].dropna().empty
-        else 0.0
-    )
+    # Filtrage des lignes valides pour cotes et edges
+    odds_valid = df_7j[df_7j["odds_num"] > 0]["odds_num"]
+    edge_valid = df_7j["edge_num"]
 
-    # Totaux financiers
+    avg_odds = odds_valid.mean() if not odds_valid.empty else 0.0
+    avg_edge = (edge_valid.mean() * 100) if not edge_valid.empty else 0.0
+
     total_mises = df_7j["mises_num"].sum()
     total_gains_pertes = df_7j["gains_num"].sum()
     roi_reel = (
         (total_gains_pertes / total_mises) * 100 if total_mises > 0 else 0.0
     )
 
-    # Top Ligue (Col D)
     leagues = df_7j[col_league].replace("", np.nan).dropna()
     top_league = leagues.mode().iloc[0] if not leagues.empty else "N/A"
 
-    # Répartition Buts vs Tirs (Col F)
     tirs_mask = df_7j[col_paris].astype(str).str.contains(
         "Cut|shots|sot|Tirs", case=False
     )
@@ -320,7 +315,6 @@ def get_sidebar_metrics(
     }
   except Exception:
     return None
-
 
 # ==========================================
 # 3. LOGIQUE MATHÉMATIQUE (DIXON-COLES & NBINOM)
