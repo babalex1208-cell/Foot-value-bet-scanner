@@ -524,8 +524,8 @@ def generate_pdf_report(df_filtered, period_label):
     # Entêtes tableau
     pdf.cell(70, 7, "Ligue", border=1)
     pdf.cell(30, 7, "Bets", border=1, align="C")
-    pdf.cell(45, 7, "Mises (€)", border=1, align="R")
-    pdf.cell(45, 7, "P&L (€)", border=1, align="R")
+    pdf.cell(45, 7, "Mises (EUR)", border=1, align="R")
+    pdf.cell(45, 7, "P&L (EUR)", border=1, align="R")
     pdf.ln()
 
     pdf.set_font("Helvetica", "", 10)
