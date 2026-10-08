@@ -210,7 +210,116 @@ def export_value_bet_to_sheet(
     st.error(f"Erreur lors de l'exportation vers Google Sheets : {e}")
     return False
 
+@st.cache_data(ttl=300)
+def get_sidebar_metrics(
+    spreadsheet_id=SPREADSHEET_ID, worksheet_name="Suivi Value Bets Global"
+):
+  """Lit le Google Sheet et calcule les statistiques dynamiques de la sidebar (y compris Mises et Gains/Pertes)."""
+  try:
+    gc = get_gspread_client()
+    sh = gc.open_by_key(spreadsheet_id).worksheet(worksheet_name)
+    data = sh.get_all_values()
 
+    # Sécurité si la feuille est vide ou contient uniquement l'en-tête
+    if len(data) <= 1:
+      return None
+
+    df_bets = pd.DataFrame(data[1:])
+
+    # Indexation des colonnes (A=0, D=3, F=5, H=7, K=10, M=12, O=14)
+    col_date = 0
+    col_league = 3
+    col_paris = 5
+    col_odds = 7
+    col_edge = 10
+    col_mises = 12
+    col_gains_pertes = 14
+
+    # Parsing des dates (Col A)
+    df_bets["parsed_date"] = pd.to_datetime(
+        df_bets[col_date], dayfirst=True, errors="coerce"
+    )
+
+    now = pd.Timestamp.now()
+    cutoff_7j = now - pd.Timedelta(days=7)
+    cutoff_14j = now - pd.Timedelta(days=14)
+
+    # Filtrage des 7 derniers jours vs semaine précédente
+    df_7j = df_bets[df_bets["parsed_date"] >= cutoff_7j].copy()
+    df_s1 = df_bets[
+        (df_bets["parsed_date"] >= cutoff_14j)
+        & (df_bets["parsed_date"] < cutoff_7j)
+    ].copy()
+
+    total_vbs = len(df_7j)
+    total_s1 = len(df_s1)
+    delta_vbs = total_vbs - total_s1
+
+    # Repli sur l'historique complet si aucun pari sur les 7 derniers jours
+    if df_7j.empty:
+      df_7j = df_bets.copy()
+
+    # --- NETTOYAGE ET CONVERSIONS NUMÉRIQUES ---
+    # Cotes (Col H) & Edge (Col K)
+    df_7j["odds_num"] = pd.to_numeric(
+        df_7j[col_odds].astype(str).str.replace(",", "."), errors="coerce"
+    )
+    df_7j["edge_num"] = pd.to_numeric(
+        df_7j[col_edge].astype(str).str.replace(",", "."), errors="coerce"
+    )
+
+    # Mises (Col M) & Gains/Pertes (Col O)
+    df_7j["mises_num"] = pd.to_numeric(
+        df_7j[col_mises].astype(str).str.replace(",", "."), errors="coerce"
+    ).fillna(0.0)
+    df_7j["gains_num"] = pd.to_numeric(
+        df_7j[col_gains_pertes].astype(str).str.replace(",", "."), errors="coerce"
+    ).fillna(0.0)
+
+    # --- CALCULS STATISTIQUES ---
+    avg_odds = (
+        df_7j["odds_num"].mean() if not df_7j["odds_num"].dropna().empty else 0.0
+    )
+    avg_edge = (
+        (df_7j["edge_num"].mean() * 100)
+        if not df_7j["edge_num"].dropna().empty
+        else 0.0
+    )
+
+    # Totaux financiers
+    total_mises = df_7j["mises_num"].sum()
+    total_gains_pertes = df_7j["gains_num"].sum()
+    roi_reel = (
+        (total_gains_pertes / total_mises) * 100 if total_mises > 0 else 0.0
+    )
+
+    # Top Ligue (Col D)
+    leagues = df_7j[col_league].replace("", np.nan).dropna()
+    top_league = leagues.mode().iloc[0] if not leagues.empty else "N/A"
+
+    # Répartition Buts vs Tirs (Col F)
+    tirs_mask = df_7j[col_paris].astype(str).str.contains(
+        "Cut|shots|sot|Tirs", case=False
+    )
+    tirs_count = tirs_mask.sum()
+    pct_tirs = (tirs_count / total_vbs) if total_vbs > 0 else 0.5
+    pct_buts = 1.0 - pct_tirs
+
+    return {
+        "total_vbs": total_vbs,
+        "delta_vbs": delta_vbs,
+        "avg_edge": round(avg_edge, 1),
+        "avg_odds": round(avg_odds, 2),
+        "expected_roi": round(avg_edge, 1),
+        "top_league": top_league,
+        "pct_buts": pct_buts,
+        "pct_tirs": pct_tirs,
+        "total_mises": round(total_mises, 2),
+        "total_gains_pertes": round(total_gains_pertes, 2),
+        "roi_reel": round(roi_reel, 2),
+    }
+  except Exception:
+    return None
 
 
 # ==========================================
@@ -488,6 +597,9 @@ def train_all_models(df):
 # ==========================================
 # 5. SIDEBAR (FILTRES & METRIQUES)
 # ==========================================
+# ==========================================
+# 5. SIDEBAR (FILTRES & METRIQUES)
+# ==========================================
 st.sidebar.header("🎯 Mode d'Analyse")
 match_mode = st.sidebar.radio(
     "Sélectionnez le contexte", ["Avant-match (Statique)", "En direct (Live)"]
@@ -495,23 +607,44 @@ match_mode = st.sidebar.radio(
 
 st.sidebar.header("📋 Catégories à Analyser")
 cat_buts_main = st.sidebar.checkbox("⚽ Marchés Buts Principaux", value=True)
-cat_buts_team = st.sidebar.checkbox("市内 Buts par Équipe", value=True)
+cat_buts_team = st.sidebar.checkbox("🥅 Buts par Équipe", value=True)
 cat_shots = st.sidebar.checkbox("📊 Tirs & Tirs Cadrés", value=True)
 
 st.sidebar.divider()
 
+# --- CALCUL ET AFFICHAGE DYNAMIQUE DES METRIQUES ---
 st.sidebar.subheader("📊 Performance Hebdo (7j)")
-total_vbs = 24
-avg_edge = 6.8
-avg_odds = 1.88
-expected_roi = 8.4
-top_league = "Premier League"
-pct_buts = 0.60
-pct_tirs = 0.40
 
+# Récupération des données depuis Google Sheets
+metrics = get_sidebar_metrics()
+
+if metrics:
+  total_vbs = metrics["total_vbs"]
+  delta_vbs = metrics["delta_vbs"]
+  avg_edge = metrics["avg_edge"]
+  avg_odds = metrics["avg_odds"]
+  expected_roi = metrics["expected_roi"]
+  top_league = metrics["top_league"]
+  pct_buts = metrics["pct_buts"]
+  pct_tirs = metrics["pct_tirs"]
+  total_mises = metrics["total_mises"]
+  total_gains = metrics["total_gains_pertes"]
+  roi_reel = metrics["roi_reel"]
+else:
+  # Valeurs de secours si la feuille est vide ou inaccessible
+  total_vbs, delta_vbs, avg_edge, avg_odds, expected_roi = 0, 0, 0.0, 0.0, 0.0
+  top_league = "Aucune donnée"
+  pct_buts, pct_tirs = 0.5, 0.5
+  total_mises, total_gains, roi_reel = 0.0, 0.0, 0.0
+
+# 1. KPIs de Volume & Cotes
 kpi_col1, kpi_col2 = st.sidebar.columns(2)
 with kpi_col1:
-  st.metric(label="Value Bets", value=f"{total_vbs}", delta="+5 vs S-1")
+  st.metric(
+      label="Value Bets",
+      value=f"{total_vbs}",
+      delta=f"{delta_vbs:+d} vs S-1" if metrics else None,
+  )
   st.metric(label="Cote Moyenne", value=f"{avg_odds:.2f}")
 
 with kpi_col2:
@@ -519,9 +652,25 @@ with kpi_col2:
   st.metric(label="ROI Théorique", value=f"+{expected_roi:.1f}%")
 
 st.sidebar.metric(label="🏆 Top Ligue (Edge)", value=top_league)
+
+# 2. Répartition des Marchés (Buts vs Tirs)
 st.sidebar.markdown("**🎯 Répartition Marchés**")
 st.sidebar.caption(f"{pct_buts:.0%} Buts  |  {pct_tirs:.0%} Tirs")
 st.sidebar.progress(pct_buts)
+
+# 3. Bilan Financier Réel (Mises, Gains & ROI Réel)
+st.sidebar.markdown("---")
+st.sidebar.markdown("**💰 Bilan Financier**")
+
+fin_col1, fin_col2 = st.sidebar.columns(2)
+with fin_col1:
+  st.metric(label="Mises Totales", value=f"{total_mises:,.2f} €".replace(",", " "))
+with fin_col2:
+  st.metric(
+      label="P&L Net",
+      value=f"{total_gains:+,.2f} €".replace(",", " "),
+      delta=f"{roi_reel:+.1f}% ROI",
+  )
 
 st.sidebar.divider()
 
