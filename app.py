@@ -636,9 +636,6 @@ def train_all_models(df):
 # ==========================================
 # 5. SIDEBAR (FILTRES & METRIQUES)
 # ==========================================
-# ==========================================
-# 5. SIDEBAR (FILTRES & METRIQUES)
-# ==========================================
 st.sidebar.header("🎯 Mode d'Analyse")
 match_mode = st.sidebar.radio(
     "Sélectionnez le contexte", ["Avant-match (Statique)", "En direct (Live)"]
@@ -650,6 +647,11 @@ cat_buts_team = st.sidebar.checkbox("🥅 Buts par Équipe", value=True)
 cat_shots = st.sidebar.checkbox("📊 Tirs & Tirs Cadrés", value=True)
 
 st.sidebar.divider()
+
+# --- BOUTON DE RAFRAÎCHISSEMENT RAPIDE ---
+if st.sidebar.button("🔄 Purger le cache & Actualiser"):
+  st.cache_data.clear()
+  st.rerun()
 
 # --- CALCUL ET AFFICHAGE DYNAMIQUE DES METRIQUES ---
 st.sidebar.subheader("📊 Performance Hebdo (7j)")
@@ -697,18 +699,28 @@ st.sidebar.markdown("**🎯 Répartition Marchés**")
 st.sidebar.caption(f"{pct_buts:.0%} Buts  |  {pct_tirs:.0%} Tirs")
 st.sidebar.progress(pct_buts)
 
-# 3. Bilan Financier Réel (Mises, Gains & ROI Réel)
+# 3. Bilan Financier Réel (Mises, P&L & ROI Réel)
 st.sidebar.markdown("---")
 st.sidebar.markdown("**💰 Bilan Financier**")
 
 fin_col1, fin_col2 = st.sidebar.columns(2)
 with fin_col1:
   st.metric(label="Mises Totales", value=f"{total_mises:,.2f} €".replace(",", " "))
+  st.metric(
+      label="ROI Réel",
+      value=f"{roi_reel:+.1f}%",
+      delta=(
+          f"{roi_reel - expected_roi:+.1f}% vs Théo"
+          if (metrics and total_vbs > 0)
+          else None
+      ),
+  )
+
 with fin_col2:
   st.metric(
       label="P&L Net",
       value=f"{total_gains:+,.2f} €".replace(",", " "),
-      delta=f"{roi_reel:+.1f}% ROI",
+      delta=f"{roi_reel:+.1f}% ROI" if (metrics and total_vbs > 0) else None,
   )
 
 st.sidebar.divider()
