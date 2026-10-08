@@ -362,7 +362,6 @@ def get_sidebar_metrics(
   except Exception:
     return None
 
-@st.cache_data(ttl=60)
 def fetch_raw_data_from_sheets(
     spreadsheet_id=SPREADSHEET_ID, worksheet_name="Suivi Value Bets Global"
 ):
@@ -403,12 +402,12 @@ def prepare_dataframe(df_raw):
 
   df = df_raw.copy()
 
-  # Indexation des colonnes (selon la structure Google Sheets)
+  # Indexation des colonnes par position (A=0, D=3, F=5, H=7, K=10, M=12, O=14)
   col_date, col_league, col_paris = 0, 3, 5
   col_odds, col_edge, col_mises, col_gains_pertes = 7, 10, 12, 14
 
-  # Conversion des dates avec parsing souple
-  raw_dates = df[col_date].astype(str).str.strip().str.split(" ").str[0]
+  # Conversion des dates avec .iloc
+  raw_dates = df.iloc[:, col_date].astype(str).str.strip().str.split(" ").str[0]
   df["parsed_date"] = pd.to_datetime(raw_dates, dayfirst=True, errors="coerce")
   df = df.dropna(subset=["parsed_date"]).sort_values("parsed_date").copy()
 
@@ -426,14 +425,14 @@ def prepare_dataframe(df_raw):
     extracted = s.str.extract(r"(-?\d+\.?\d*)")[0]
     return pd.to_numeric(extracted, errors="coerce").fillna(0.0)
 
-  df["league"] = df[col_league].astype(str).str.strip()
-  df["pari"] = df[col_paris].astype(str).str.strip()
-  df["odds_num"] = clean_num(df[col_odds])
-  df["edge_num"] = clean_num(df[col_edge])
-  df["mises_num"] = clean_num(df[col_mises])
-  df["gains_num"] = clean_num(df[col_gains_pertes])
+  df["league"] = df.iloc[:, col_league].astype(str).str.strip()
+  df["pari"] = df.iloc[:, col_paris].astype(str).str.strip()
+  df["odds_num"] = clean_num(df.iloc[:, col_odds])
+  df["edge_num"] = clean_num(df.iloc[:, col_edge])
+  df["mises_num"] = clean_num(df.iloc[:, col_mises])
+  df["gains_num"] = clean_num(df.iloc[:, col_gains_pertes])
 
-  # Normalisation de l'edge (si exprimé en décimal vs pourcentage)
+  # Normalisation de l'edge
   df["edge_pct"] = df["edge_num"].apply(
       lambda x: x if abs(x) > 1.0 else x * 100.0
   )
