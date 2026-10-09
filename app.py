@@ -315,7 +315,6 @@ def compute_top_league(df_subset):
   bets_label = "pari" if nb_bets_val == 1 else "paris"
   std_val = best["std_edge"]
 
-  # FORMAT AVEC ÉCART-TYPE : (PnL | ROI | Volume | Edge ± σ)
   return (
       f"{best['league_clean']} ({pnl_formatted} | {best['roi']:+.1f}% |"
       f" {nb_bets_val} {bets_label} | {best['avg_edge']:+.1f}% ± {std_val:.1f}% edge)"
@@ -377,7 +376,7 @@ def prepare_dataframe(df_raw):
 
 
 def filter_by_period(df, period_choice):
-  """Filtre le DataFrame selon la période choisie dans le sélecteur (sans MTD)."""
+  """Filtre le DataFrame selon la période choisie dans le sélecteur."""
   if df is None or df.empty:
     return pd.DataFrame()
 
@@ -853,12 +852,20 @@ st.sidebar.markdown("**🎯 Répartition Marchés**")
 st.sidebar.caption(f"{pct_buts:.0%} Buts  |  {pct_tirs:.0%} Tirs")
 st.sidebar.progress(pct_buts)
 
-# 3. Bilan Financier Tripartite (Global, Buts, Tirs)
+# 3. Bilan Financier Tripartite (Style & Polices mis à jour)
 st.sidebar.markdown("---")
-st.sidebar.markdown("**💰 Bilan Financier**")
+st.sidebar.markdown(
+    "<span style='font-size: 1.2rem; font-weight: bold;'>💰 Bilan"
+    " Financier</span>",
+    unsafe_allow_html=True,
+)
 
 # A. Global
-st.sidebar.markdown("🌐 **Global**")
+st.sidebar.markdown(
+    "<div style='margin-top: 8px;'><span style='font-size: 0.98rem; font-weight:"
+    " 600; color: #e0e0e0;'>🌐 Global</span></div>",
+    unsafe_allow_html=True,
+)
 fg1, fg2 = st.sidebar.columns(2)
 with fg1:
   st.sidebar.metric(
@@ -872,7 +879,11 @@ with fg2:
   )
 
 # B. Marchés Buts
-st.sidebar.markdown("⚽ **Marchés Buts**")
+st.sidebar.markdown(
+    "<div style='margin-top: 8px;'><span style='font-size: 0.98rem; font-weight:"
+    " 600; color: #e0e0e0;'>⚽ Marchés Buts</span></div>",
+    unsafe_allow_html=True,
+)
 fb1, fb2 = st.sidebar.columns(2)
 with fb1:
   st.sidebar.metric(
@@ -886,7 +897,11 @@ with fb2:
   )
 
 # C. Marchés Tirs
-st.sidebar.markdown("📊 **Marchés Tirs**")
+st.sidebar.markdown(
+    "<div style='margin-top: 8px;'><span style='font-size: 0.98rem; font-weight:"
+    " 600; color: #e0e0e0;'>📊 Marchés Tirs</span></div>",
+    unsafe_allow_html=True,
+)
 ft1, ft2 = st.sidebar.columns(2)
 with ft1:
   st.sidebar.metric(
@@ -899,23 +914,27 @@ with ft2:
       label="P&L (Tirs)", value=f"{fin_tirs['pnl']:+,.2f} €".replace(",", " ")
   )
 
-# --- TOP LIGUES : AFFICHAGE COMPACT (POLICE RÉDUITE) ---
+# --- TOP LIGUES : TITRE TAILLE D'ÉGALITÉ (1.2rem) & POLICE LIGUES LÉGÈREMENT GROSSIE ---
 st.sidebar.markdown("---")
-st.sidebar.markdown("**🏆 Top Ligues (Période Active)**")
+st.sidebar.markdown(
+    "<span style='font-size: 1.2rem; font-weight: bold;'>🏆 Top Ligues"
+    " (Période Active)</span>",
+    unsafe_allow_html=True,
+)
 
 st.sidebar.markdown(
     f"""
-    <div style="font-size: 0.72rem; line-height: 1.4; background-color: #1e2129; padding: 8px 10px; border-radius: 6px; margin-bottom: 6px; border-left: 3px solid #00CC96;">
-        <span style="font-weight: bold; color: #a0aab8; font-size: 0.68rem; text-transform: uppercase;">🌐 Global</span><br>
-        <span style="color: #ffffff; font-weight: 500;">{top_league_global}</span>
+    <div style="font-size: 0.85rem; line-height: 1.45; background-color: #1e2129; padding: 9px 11px; border-radius: 6px; margin-top: 10px; margin-bottom: 8px; border-left: 3.5px solid #00CC96;">
+        <span style="font-weight: bold; color: #a0aab8; font-size: 0.75rem; text-transform: uppercase;">🌐 Global</span><br>
+        <span style="color: #ffffff; font-weight: 500; font-size: 0.83rem;">{top_league_global}</span>
     </div>
-    <div style="font-size: 0.72rem; line-height: 1.4; background-color: #1e2129; padding: 8px 10px; border-radius: 6px; margin-bottom: 6px; border-left: 3px solid #00CC96;">
-        <span style="font-weight: bold; color: #a0aab8; font-size: 0.68rem; text-transform: uppercase;">⚽ Marchés Buts</span><br>
-        <span style="color: #ffffff; font-weight: 500;">{top_league_buts}</span>
+    <div style="font-size: 0.85rem; line-height: 1.45; background-color: #1e2129; padding: 9px 11px; border-radius: 6px; margin-bottom: 8px; border-left: 3.5px solid #00CC96;">
+        <span style="font-weight: bold; color: #a0aab8; font-size: 0.75rem; text-transform: uppercase;">⚽ Marchés Buts</span><br>
+        <span style="color: #ffffff; font-weight: 500; font-size: 0.83rem;">{top_league_buts}</span>
     </div>
-    <div style="font-size: 0.72rem; line-height: 1.4; background-color: #1e2129; padding: 8px 10px; border-radius: 6px; margin-bottom: 6px; border-left: 3px solid #00CC96;">
-        <span style="font-weight: bold; color: #a0aab8; font-size: 0.68rem; text-transform: uppercase;">📊 Marchés Tirs</span><br>
-        <span style="color: #ffffff; font-weight: 500;">{top_league_tirs}</span>
+    <div style="font-size: 0.85rem; line-height: 1.45; background-color: #1e2129; padding: 9px 11px; border-radius: 6px; margin-bottom: 8px; border-left: 3.5px solid #00CC96;">
+        <span style="font-weight: bold; color: #a0aab8; font-size: 0.75rem; text-transform: uppercase;">📊 Marchés Tirs</span><br>
+        <span style="color: #ffffff; font-weight: 500; font-size: 0.83rem;">{top_league_tirs}</span>
     </div>
     """,
     unsafe_allow_html=True,
@@ -1197,7 +1216,7 @@ if cat_buts_main:
     btts_no = c4.number_input("BTTS Non", value=None, step=0.01)
 
 if cat_buts_team:
-  with st.expander("角 BUTS PAR ÉQUIPE (Over / Under 0.5 et 1.5)"):
+  with st.expander("🥅 BUTS PAR ÉQUIPE (Over / Under 0.5 et 1.5)"):
     st.markdown(f"**🏠 {home_team} (Domicile)**")
     c1, c2, c3, c4 = st.columns(4)
     hg_o05 = c1.number_input("Over 0.5 (Dom)", value=None, step=0.01)
