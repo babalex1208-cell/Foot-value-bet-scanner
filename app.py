@@ -241,6 +241,7 @@ def compute_top_league(df_subset):
   """Calcule dynamiquement la meilleure ligue sur le DataFrame filtré.
 
   Index 4-facteurs : PnL (40%), ROI (25%), Volume Log (20%), Edge (15%).
+  Format de retour : Ligue (PnL | ROI | Volume | Edge Moyen)
   """
   if df_subset is None or df_subset.empty:
     return "Aucun pari"
@@ -308,7 +309,14 @@ def compute_top_league(df_subset):
 
   best = pos_stats.sort_values(by="score", ascending=False).iloc[0]
   pnl_formatted = f"{best['pnl']:+,.2f} €".replace(",", " ")
-  return f"{best['league_clean']} ({pnl_formatted} | {best['roi']:+.1f}%)"
+  nb_bets_val = int(best["nb_bets"])
+  bets_label = "pari" if nb_bets_val == 1 else "paris"
+
+  # NOUVEAU FORMAT : (PnL | ROI | Volume | Edge Moyen)
+  return (
+      f"{best['league_clean']} ({pnl_formatted} | {best['roi']:+.1f}% |"
+      f" {nb_bets_val} {bets_label} | {best['avg_edge']:+.1f}% edge)"
+  )
 
 
 def prepare_dataframe(df_raw):
@@ -827,7 +835,7 @@ st.sidebar.markdown("**🎯 Répartition Marchés**")
 st.sidebar.caption(f"{pct_buts:.0%} Buts  |  {pct_tirs:.0%} Tirs")
 st.sidebar.progress(pct_buts)
 
-# 3. Bilan Financier Réel & Top Ligues
+# 3. Bilan Financier Réel
 st.sidebar.markdown("---")
 st.sidebar.markdown("**💰 Bilan Financier**")
 
@@ -851,11 +859,27 @@ with fin_col2:
       delta=f"{roi_reel:+.1f}% ROI" if total_vbs > 0 else None,
   )
 
+# --- TOP LIGUES : AFFICHAGE COMPACT (POLICE RÉDUITE DE MOITIÉ) ---
 st.sidebar.markdown("---")
 st.sidebar.markdown("**🏆 Top Ligues (Période Active)**")
-st.sidebar.metric(label="🌐 Global", value=top_league_global)
-st.sidebar.metric(label="⚽ Marchés Buts", value=top_league_buts)
-st.sidebar.metric(label="📊 Marchés Tirs", value=top_league_tirs)
+
+st.sidebar.markdown(
+    f"""
+    <div style="font-size: 0.72rem; line-height: 1.4; background-color: #1e2129; padding: 8px 10px; border-radius: 6px; margin-bottom: 6px; border-left: 3px solid #00CC96;">
+        <span style="font-weight: bold; color: #a0aab8; font-size: 0.68rem; text-transform: uppercase;">🌐 Global</span><br>
+        <span style="color: #ffffff; font-weight: 500;">{top_league_global}</span>
+    </div>
+    <div style="font-size: 0.72rem; line-height: 1.4; background-color: #1e2129; padding: 8px 10px; border-radius: 6px; margin-bottom: 6px; border-left: 3px solid #00CC96;">
+        <span style="font-weight: bold; color: #a0aab8; font-size: 0.68rem; text-transform: uppercase;">⚽ Marchés Buts</span><br>
+        <span style="color: #ffffff; font-weight: 500;">{top_league_buts}</span>
+    </div>
+    <div style="font-size: 0.72rem; line-height: 1.4; background-color: #1e2129; padding: 8px 10px; border-radius: 6px; margin-bottom: 6px; border-left: 3px solid #00CC96;">
+        <span style="font-weight: bold; color: #a0aab8; font-size: 0.68rem; text-transform: uppercase;">📊 Marchés Tirs</span><br>
+        <span style="color: #ffffff; font-weight: 500;">{top_league_tirs}</span>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 st.sidebar.divider()
 
