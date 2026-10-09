@@ -844,7 +844,7 @@ if st.sidebar.button("🔄 Purger le cache & Actualiser"):
   st.cache_data.clear()
   st.rerun()
 
-# 1. PERFORMANCE TRI-MARCHÉ (MÊME TAILLE DE POLICE QUE BILAN FINANCIER & TOP LIGUES)
+# 1. PERFORMANCE TRI-MARCHÉ
 st.sidebar.markdown(
     f"<span style='font-size: 1.2rem; font-weight: bold;'>📊 Performance"
     f" ({period_choice})</span>",
@@ -1140,7 +1140,6 @@ with st.spinner("Calcul et calibration des modèles..."):
 df_fixtures = load_fixtures()
 idx_h, idx_a = 0, min(1, len(teams_list) - 1)
 selected_date = datetime.now().strftime("%d/%m/%Y")
-timing_paris = "1. J-2+"
 match_date = datetime.today().date()
 
 if df_fixtures is not None and not df_fixtures.empty:
@@ -1152,7 +1151,7 @@ if df_fixtures is not None and not df_fixtures.empty:
         league_fixtures["Date"].dropna().unique().tolist()
     )
 
-    col_d, col_m, col_t = st.columns([1, 2, 1])
+    col_d, col_m = st.columns([1, 2])
 
     with col_d:
       selected_date_opt = st.selectbox(
@@ -1173,12 +1172,6 @@ if df_fixtures is not None and not df_fixtures.empty:
       selected_fixture = st.selectbox(
           "⚽ 2. Choisir le match",
           options=["-- Sélectionner un match --"] + fixture_options,
-      )
-
-    with col_t:
-      timing_paris = st.selectbox(
-          "⏱️ 3. Timing prise de pari",
-          options=["1. J-2+", "2. J-1", "3. H-12 à H-2", "4. H-2 à H"],
       )
 
     if selected_fixture != "-- Sélectionner un match --":
