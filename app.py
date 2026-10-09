@@ -13,6 +13,9 @@ import requests
 from scipy.optimize import minimize
 from scipy.stats import nbinom, poisson
 import streamlit as st
+import re
+import plotly.graph_objects as go
+from fpdf import FPDF
 
 # ==========================================
 # 1. CONFIGURATION (Doit être la toute première commande Streamlit)
@@ -211,10 +214,350 @@ def export_value_bet_to_sheet(
     return False
 
 
+@st.cache_data(ttl=60)  # Réduit à 60 secondes pour une réactivité optimale
+def get_sidebar_metrics(
+    spreadsheet_id=SPREADSHEET_ID, worksheet_name="Suivi Value Bets Global"
+):
+  """Lit l'onglet spécifié du Google Sheet et calcule les statistiques sur les 7 derniers jours."""
+  try:
+    gc = get_gspread_client()
+    sh = gc.open_by_key(spreadsheet_id).worksheet(worksheet_name)
+    data = sh.get_all_values()
+
+    if not data or len(data) < 2:
+      return None
+
+    # 1. RECHERCHE DYNAMIQUE DE LA LIGNE D'EN-TÊTE ("Date")
+    header_idx = -1
+    for i, row in enumerate(data):
+      if row and str(row[0]).strip().lower() == "date":
+        header_idx = i
+        break
+
+    if header_idx != -1 and header_idx + 1 < len(data):
+      rows_data = data[header_idx + 1 :]
+    else:
+      rows_data = data[1:]
+
+    df_bets = pd.DataFrame(rows_data)
+    if df_bets.empty:
+      return None
+
+    # Indexation des colonnes (A=0, D=3, F=5, H=7, K=10, M=12, O=14)
+    col_date, col_league, col_paris = 0, 3, 5
+    col_odds, col_edge, col_mises, col_gains_pertes = 7, 10, 12, 14
+
+    # 2. PARSING SOUPLE ET ROBUSTE DES DATES
+    raw_dates = df_bets[col_date].astype(str).str.strip().str.split(" ").str[0]
+    df_bets["parsed_date"] = pd.to_datetime(
+        raw_dates, dayfirst=True, errors="coerce"
+    )
+
+    # Conservation uniquement des lignes avec une date valide
+    df_bets = df_bets.dropna(subset=["parsed_date"]).copy()
+
+    now = pd.Timestamp.now()
+    cutoff_7j = now - pd.Timedelta(days=7)
+    cutoff_14j = now - pd.Timedelta(days=14)
+
+    # Filtrage strict sur les 7 derniers jours
+    df_7j = df_bets[
+        (df_bets["parsed_date"] >= cutoff_7j)
+        & (df_bets["parsed_date"] <= now)
+    ].copy()
+    df_s1 = df_bets[
+        (df_bets["parsed_date"] >= cutoff_14j)
+        & (df_bets["parsed_date"] < cutoff_7j)
+    ].copy()
+
+    total_vbs = len(df_7j)
+    total_s1 = len(df_s1)
+    delta_vbs = total_vbs - total_s1
+
+    # 3. SI AUCUN PARI DANS LES 7 DERNIERS JOURS : RETOUR À ZERO STRICT
+    if total_vbs == 0:
+      return {
+          "total_vbs": 0,
+          "delta_vbs": delta_vbs,
+          "avg_edge": 0.0,
+          "avg_odds": 0.0,
+          "expected_roi": 0.0,
+          "top_league": "Aucun pari (7j)",
+          "pct_buts": 0.5,
+          "pct_tirs": 0.5,
+          "total_mises": 0.0,
+          "total_gains_pertes": 0.0,
+          "roi_reel": 0.0,
+      }
+
+    # 4. NETTOYAGE ET CONVERSIONS NUMÉRIQUES
+    def clean_num_series(series):
+      s = (
+          series.astype(str)
+          .str.replace("€", "", regex=False)
+          .str.replace("%", "", regex=False)
+          .str.replace(" ", "", regex=False)
+          .str.replace("\xa0", "", regex=False)
+          .str.replace(",", ".", regex=False)
+          .str.strip()
+      )
+      extracted = s.str.extract(r"(-?\d+\.?\d*)")[0]
+      return pd.to_numeric(extracted, errors="coerce").fillna(0.0)
+
+    df_7j["odds_num"] = clean_num_series(df_7j[col_odds])
+    df_7j["edge_num"] = clean_num_series(df_7j[col_edge])
+    df_7j["mises_num"] = clean_num_series(df_7j[col_mises])
+    df_7j["gains_num"] = clean_num_series(df_7j[col_gains_pertes])
+
+    # Edge (Ajustement facteur 100 si nécessaire)
+    edges = df_7j[df_7j["edge_num"] != 0]["edge_num"]
+    if not edges.empty:
+      mean_raw_edge = edges.mean()
+      avg_edge = (
+          mean_raw_edge if mean_raw_edge > 1.0 else mean_raw_edge * 100
+      )
+    else:
+      avg_edge = 0.0
+
+    odds_valid = df_7j[df_7j["odds_num"] > 1.0]["odds_num"]
+    avg_odds = odds_valid.mean() if not odds_valid.empty else 0.0
+
+    total_mises = df_7j["mises_num"].sum()
+    total_gains_pertes = df_7j["gains_num"].sum()
+    roi_reel = (
+        (total_gains_pertes / total_mises) * 100 if total_mises > 0 else 0.0
+    )
+
+    # Top Ligue
+    leagues = df_7j[col_league].astype(str).str.strip()
+    clean_leagues = leagues[
+        ~leagues.str.contains("€|Total|Bankroll|Live|Avant", case=False)
+        & (leagues != "")
+    ]
+    top_league = (
+        clean_leagues.mode().iloc[0] if not clean_leagues.empty else "N/A"
+    )
+
+    # Répartition Buts vs Tirs
+    tirs_mask = df_7j[col_paris].astype(str).str.contains(
+        "Cut|shots|sot|Tirs", case=False
+    )
+    tirs_count = tirs_mask.sum()
+    pct_tirs = (tirs_count / total_vbs) if total_vbs > 0 else 0.5
+    pct_buts = 1.0 - pct_tirs
+
+    return {
+        "total_vbs": total_vbs,
+        "delta_vbs": delta_vbs,
+        "avg_edge": round(avg_edge, 1),
+        "avg_odds": round(avg_odds, 2),
+        "expected_roi": round(avg_edge, 1),
+        "top_league": top_league,
+        "pct_buts": pct_buts,
+        "pct_tirs": pct_tirs,
+        "total_mises": round(total_mises, 2),
+        "total_gains_pertes": round(total_gains_pertes, 2),
+        "roi_reel": round(roi_reel, 2),
+    }
+  except Exception:
+    return None
+
+def fetch_raw_data_from_sheets(
+    spreadsheet_id=SPREADSHEET_ID, worksheet_name="Suivi Value Bets Global"
+):
+  """Récupère l'ensemble des lignes du Google Sheet sous forme de DataFrame brut."""
+  try:
+    gc = get_gspread_client()
+    sh = gc.open_by_key(spreadsheet_id).worksheet(worksheet_name)
+    data = sh.get_all_values()
+
+    if not data or len(data) < 2:
+      return pd.DataFrame()
+
+    # Détection dynamique de la ligne d'en-tête "Date"
+    header_idx = -1
+    for i, row in enumerate(data):
+      if row and str(row[0]).strip().lower() == "date":
+        header_idx = i
+        break
+
+    if header_idx != -1:
+      df = pd.DataFrame(data[header_idx + 1 :], columns=data[header_idx])
+    else:
+      df = pd.DataFrame(data[1:])
+
+    return df
+  except Exception as e:
+    st.error(f"Erreur lors de la récupération du Google Sheet : {e}")
+    return pd.DataFrame()
+
+# ==========================================
+# 3. FONCTIONS HELPER DE TRAITEMENT
+# ==========================================
+
+def prepare_dataframe(df_raw):
+  """Prépare et nettoie le DataFrame brut de Google Sheets pour tous les modules."""
+  if df_raw is None or df_raw.empty:
+    return pd.DataFrame()
+
+  df = df_raw.copy()
+
+  # Indexation des colonnes par position (A=0, D=3, F=5, H=7, K=10, M=12, O=14)
+  col_date, col_league, col_paris = 0, 3, 5
+  col_odds, col_edge, col_mises, col_gains_pertes = 7, 10, 12, 14
+
+  # Conversion des dates avec .iloc
+  raw_dates = (
+        df.iloc[:, col_date]
+        .astype(str)
+        .str.strip()
+        .str.extract(r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})")[0]
+    )
+  df["parsed_date"] = pd.to_datetime(raw_dates, dayfirst=True, errors="coerce")
+  df = df.dropna(subset=["parsed_date"]).sort_values("parsed_date").copy()
+
+  # Fonction de nettoyage numérique
+  def clean_num(series):
+    s = (
+        series.astype(str)
+        .str.replace("€", "", regex=False)
+        .str.replace("%", "", regex=False)
+        .str.replace(" ", "", regex=False)
+        .str.replace("\xa0", "", regex=False)
+        .str.replace(",", ".", regex=False)
+        .str.strip()
+    )
+    extracted = s.str.extract(r"(-?\d+\.?\d*)")[0]
+    return pd.to_numeric(extracted, errors="coerce").fillna(0.0)
+
+  df["league"] = df.iloc[:, col_league].astype(str).str.strip()
+  df["pari"] = df.iloc[:, col_paris].astype(str).str.strip()
+  df["odds_num"] = clean_num(df.iloc[:, col_odds])
+  df["edge_num"] = clean_num(df.iloc[:, col_edge])
+  df["mises_num"] = clean_num(df.iloc[:, col_mises])
+  df["gains_num"] = clean_num(df.iloc[:, col_gains_pertes])
+
+  # Normalisation de l'edge
+  df["edge_pct"] = df["edge_num"].apply(
+      lambda x: x if abs(x) > 1.0 else x * 100.0
+  )
+
+  # Catégorisation simplifiée du marché
+  df["type_marche"] = df["pari"].apply(
+      lambda x: (
+          "Tirs & Cadrés"
+          if any(k in str(x).lower() for k in ["shot", "sot", "tir"])
+          else "Buts & Match"
+      )
+  )
+
+  return df
+
+
+def filter_by_period(df, period_choice):
+  """Filtre le DataFrame selon la période choisie dans le sélecteur."""
+  if df.empty:
+    return df
+
+  now = pd.Timestamp.now()
+
+  if period_choice == "7 Derniers Jours":
+    cutoff = now - pd.Timedelta(days=7)
+    return df[df["parsed_date"] >= cutoff].copy()
+  elif period_choice == "30 Derniers Jours":
+    cutoff = now - pd.Timedelta(days=30)
+    return df[df["parsed_date"] >= cutoff].copy()
+  elif period_choice == "Mois en Cours (MTD)":
+    start_of_month = pd.Timestamp(now.year, now.month, 1)
+    return df[df["parsed_date"] >= start_of_month].copy()
+  elif period_choice == "Année en Cours (YTD)":
+    start_of_year = pd.Timestamp(now.year, 1, 1)
+    return df[df["parsed_date"] >= start_of_year].copy()
+  else:  # "Tout l'Historique"
+    return df.copy()
 
 
 # ==========================================
-# 3. LOGIQUE MATHÉMATIQUE (DIXON-COLES & NBINOM)
+# 4. GENERATEUR DE PDF (BILAN)
+# ==========================================
+
+
+def generate_pdf_report(df_filtered, period_label):
+  """Génère un rapport PDF élégant en mémoire."""
+  pdf = FPDF()
+  pdf.add_page()
+  pdf.set_font("Helvetica", "B", 16)
+
+  # Titre
+  pdf.cell(
+      0, 10, f"Bilan de Performance Value Bets - {period_label}", ln=True, align="C"
+  )
+  pdf.set_font("Helvetica", "", 10)
+  pdf.cell(
+      0,
+      10,
+      f'Généré le {pd.Timestamp.now().strftime("%d/%m/%Y à %H:%M")}',
+      ln=True,
+      align="C",
+  )
+  pdf.ln(5)
+
+  # Métriques clés
+  total_vbs = len(df_filtered)
+  total_mises = df_filtered["mises_num"].sum() if total_vbs > 0 else 0.0
+  total_pnl = df_filtered["gains_num"].sum() if total_vbs > 0 else 0.0
+  roi_reel = (total_pnl / total_mises * 100) if total_mises > 0 else 0.0
+  avg_edge = df_filtered["edge_pct"].mean() if total_vbs > 0 else 0.0
+
+  pdf.set_font("Helvetica", "B", 12)
+  pdf.cell(0, 8, "Résumé Global :", ln=True)
+  pdf.set_font("Helvetica", "", 11)
+
+  pdf.cell(100, 7, f"Nombre total de Value Bets : {total_vbs}", ln=True)
+  pdf.cell(100, 7, f"Total Mises : {total_mises:,.2f} EUR", ln=True)
+  pdf.cell(100, 7, f"P&L Net Réel : {total_pnl:+,.2f} EUR", ln=True)
+  pdf.cell(100, 7, f"ROI Réel : {roi_reel:+.2f} %", ln=True)
+  pdf.cell(100, 7, f"Edge Moyen Théorique : +{avg_edge:.2f} %", ln=True)
+  pdf.ln(8)
+
+  # Tableau résumé par Ligue (Top 5)
+  if total_vbs > 0:
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, "Top Ligues par Volume :", ln=True)
+    pdf.set_font("Helvetica", "B", 10)
+
+    # Entêtes tableau
+    pdf.cell(70, 7, "Ligue", border=1)
+    pdf.cell(30, 7, "Bets", border=1, align="C")
+    pdf.cell(45, 7, "Mises (EUR)", border=1, align="R")
+    pdf.cell(45, 7, "P&L (EUR)", border=1, align="R")
+    pdf.ln()
+
+    pdf.set_font("Helvetica", "", 10)
+    league_summary = (
+        df_filtered.groupby("league")
+        .agg({"mises_num": "sum", "gains_num": "sum", "pari": "count"})
+        .reset_index()
+        .sort_values("pari", ascending=False)
+        .head(8)
+    )
+
+    for _, row in league_summary.iterrows():
+      pdf.cell(70, 7, str(row["league"])[:30], border=1)
+      pdf.cell(30, 7, str(row["pari"]), border=1, align="C")
+      pdf.cell(45, 7, f"{row['mises_num']:.2f}", border=1, align="R")
+      pdf.cell(45, 7, f"{row['gains_num']:+.2f}", border=1, align="R")
+      pdf.ln()
+
+  # Output vers buffer mémoire
+  pdf_buffer = io.BytesIO()
+  pdf.output(pdf_buffer)
+  pdf_buffer.seek(0)
+  return pdf_buffer.getvalue()
+
+
+# ==========================================
+# 5. LOGIQUE MATHÉMATIQUE (DIXON-COLES & NBINOM)
 # ==========================================
 def time_weights(dates, halflife_days):
   days_ago = (dates.max() - dates).dt.days.values
@@ -235,17 +578,24 @@ def dixon_coles_adjustment(home_goals, away_goals, lam_home, lam_away, rho):
 
 
 def proba_tirs_nbinom(mu, var, ligne_bookmaker):
-  """Calcule les probas statistiques avec la Loi Binomiale Négative si surdispersion"""
+  """Calcule les probas statistiques avec la Loi Binomiale Négative / Poisson."""
+  # SÉCURITÉ : Si aucun cut/ligne n'est renseigné, on sort directement
+  if ligne_bookmaker is None:
+    return 0.0, 0.0
+
   seuil = int(np.floor(ligne_bookmaker))
 
   if var <= mu or math.isnan(var) or var == 0:
     p_under = poisson.cdf(seuil, mu)
   else:
+    # Ton code habituel pour le calcul nbinom...
+    r = (mu**2) / (var - mu)
     p = mu / var
-    n = (mu**2) / (var - mu)
-    p_under = nbinom.cdf(seuil, n, p)
+    p_under = nbinom.cdf(seuil, r, p)
 
-  return p_under, 1.0 - p_under
+  p_over = 1.0 - p_under
+  return p_under, p_over
+
 
 
 class DixonColesModel:
@@ -378,7 +728,7 @@ class DixonColesModel:
 
 
 # ==========================================
-# 4. GESTION DES DONNÉES DE MATCHS
+# 6. GESTION DES DONNÉES DE MATCHS
 # ==========================================
 @dataclass
 class ValueBetResult:
@@ -479,7 +829,7 @@ def train_all_models(df):
 
 
 # ==========================================
-# 5. SIDEBAR (FILTRES & METRIQUES)
+# 7. SIDEBAR (FILTRES & METRIQUES)
 # ==========================================
 st.sidebar.header("🎯 Mode d'Analyse")
 match_mode = st.sidebar.radio(
@@ -488,23 +838,58 @@ match_mode = st.sidebar.radio(
 
 st.sidebar.header("📋 Catégories à Analyser")
 cat_buts_main = st.sidebar.checkbox("⚽ Marchés Buts Principaux", value=True)
-cat_buts_team = st.sidebar.checkbox("市内 Buts par Équipe", value=True)
+cat_buts_team = st.sidebar.checkbox("🥅 Buts par Équipe", value=True)
 cat_shots = st.sidebar.checkbox("📊 Tirs & Tirs Cadrés", value=True)
+
+st.sidebar.header("⚙️ Filtre de Cotes")
+cote_min, cote_max = st.sidebar.slider(
+    "Plage de cotes autorisées",
+    min_value=1.10,
+    max_value=5.00,
+    value=(1.50, 2.30),
+    step=0.05
+)
 
 st.sidebar.divider()
 
-st.sidebar.subheader("📊 Performance Hebdo (7j)")
-total_vbs = 24
-avg_edge = 6.8
-avg_odds = 1.88
-expected_roi = 8.4
-top_league = "Premier League"
-pct_buts = 0.60
-pct_tirs = 0.40
+# --- BOUTON DE RAFRAÎCHISSEMENT RAPIDE ---
+if st.sidebar.button("🔄 Purger le cache & Actualiser"):
+  st.cache_data.clear()
+  st.rerun()
 
+# --- CALCUL ET AFFICHAGE DYNAMIQUE DES METRIQUES ---
+st.sidebar.subheader("📊 Performance Hebdo (7j)")
+
+# Récupération des données depuis Google Sheets
+metrics = get_sidebar_metrics()
+
+if metrics:
+  total_vbs = metrics["total_vbs"]
+  delta_vbs = metrics["delta_vbs"]
+  avg_edge = metrics["avg_edge"]
+  avg_odds = metrics["avg_odds"]
+  expected_roi = metrics["expected_roi"]
+  top_league = metrics["top_league"]
+  pct_buts = metrics["pct_buts"]
+  pct_tirs = metrics["pct_tirs"]
+  total_mises = metrics["total_mises"]
+  total_gains = metrics["total_gains_pertes"]
+  roi_reel = metrics["roi_reel"]
+else:
+  # Valeurs de secours si la feuille est vide ou inaccessible
+  total_vbs, delta_vbs, avg_edge, avg_odds, expected_roi = 0, 0, 0.0, 0.0, 0.0
+  top_league = "Aucune donnée"
+  pct_buts, pct_tirs = 0.5, 0.5
+  total_mises, total_gains, roi_reel = 0.0, 0.0, 0.0
+
+# 1. KPIs de Volume & Cotes
 kpi_col1, kpi_col2 = st.sidebar.columns(2)
 with kpi_col1:
-  st.metric(label="Value Bets", value=f"{total_vbs}", delta="+5 vs S-1")
+  st.metric(
+      label="Value Bets",
+      value=f"{total_vbs}",
+      delta=f"{delta_vbs:+d} vs S-1" if metrics else None,
+  )
   st.metric(label="Cote Moyenne", value=f"{avg_odds:.2f}")
 
 with kpi_col2:
@@ -512,16 +897,177 @@ with kpi_col2:
   st.metric(label="ROI Théorique", value=f"+{expected_roi:.1f}%")
 
 st.sidebar.metric(label="🏆 Top Ligue (Edge)", value=top_league)
+
+# 2. Répartition des Marchés (Buts vs Tirs)
 st.sidebar.markdown("**🎯 Répartition Marchés**")
 st.sidebar.caption(f"{pct_buts:.0%} Buts  |  {pct_tirs:.0%} Tirs")
 st.sidebar.progress(pct_buts)
 
+# 3. Bilan Financier Réel (Mises, P&L & ROI Réel)
+st.sidebar.markdown("---")
+st.sidebar.markdown("**💰 Bilan Financier**")
+
+fin_col1, fin_col2 = st.sidebar.columns(2)
+with fin_col1:
+  st.metric(label="Mises Totales", value=f"{total_mises:,.2f} €".replace(",", " "))
+  st.metric(
+      label="ROI Réel",
+      value=f"{roi_reel:+.1f}%",
+      delta=(
+          f"{roi_reel - expected_roi:+.1f}% vs Théo"
+          if (metrics and total_vbs > 0)
+          else None
+      ),
+  )
+
+with fin_col2:
+  st.metric(
+      label="P&L Net",
+      value=f"{total_gains:+,.2f} €".replace(",", " "),
+      delta=f"{roi_reel:+.1f}% ROI" if (metrics and total_vbs > 0) else None,
+  )
+
 st.sidebar.divider()
 
-cote_min, cote_max = 1.50, 2.30
+# ==========================================
+# 3. INTERFACE PRINCIPALE & NOUVEAUX MODULES
+# ==========================================
+
+# A. SÉLECTEUR DE PÉRIODE GLISSANTE
+st.subheader("🗓️ Filtre Temporel & Période Glissante")
+period_choice = st.selectbox(
+    "Choisir l'horizon d'analyse :",
+    [
+        "7 Derniers Jours",
+        "30 Derniers Jours",
+        "Mois en Cours (MTD)",
+        "Année en Cours (YTD)",
+        "Tout l'Historique",
+    ],
+    index=0,
+)
+
+# Chargement et préparation globale
+df_raw = fetch_raw_data_from_sheets()  # Ta fonction existante d'accès Sheet
+df_all = prepare_dataframe(df_raw)
+df_filtered = filter_by_period(df_all, period_choice)
+
+# B. GRAPHIQUE P&L RÉEL VS P&L THÉORIQUE (VARIANCE)
+st.markdown("---")
+st.subheader("📈 P&L Réel vs P&L Théorique (Courbe de Variance)")
+
+if not df_filtered.empty:
+  # 1. Copie pour ne pas altérer le DataFrame principal
+  df_chart = df_filtered.copy()
+
+  # 2. On extrait uniquement la date (jour) sans les heures/microsecondes
+  df_chart["date_jour"] = df_chart["parsed_date"].dt.date
+
+  # 3. Calcul de l'EV en Euros (€) par pari : Mise * (Edge % / 100)
+  df_chart["pnl_theo_step"] = df_chart["mises_num"] * (
+      df_chart["edge_pct"] / 100.0
+  )
+
+  # 4. Regroupement par jour pour cumuler proprement par date
+  df_pnl = (
+      df_chart.groupby("date_jour")
+      .agg({"gains_num": "sum", "pnl_theo_step": "sum", "mises_num": "sum"})
+      .reset_index()
+      .sort_values("date_jour")
+  )
+
+  # 5. Calcul des courbes cumulées quotidiennes
+  df_pnl["pnl_real_cum"] = df_pnl["gains_num"].cumsum()
+  df_pnl["pnl_theo_cum"] = df_pnl["pnl_theo_step"].cumsum()
+
+  # 6. Construction du graphique Plotly
+  fig_pnl = go.Figure()
+
+  # Courbe Réelle (exclut les jours où aucun pari n'a encore été clôturé)
+  fig_pnl.add_trace(
+      go.Scatter(
+          x=df_pnl["date_jour"],
+          y=df_pnl["pnl_real_cum"],
+          mode="lines+markers",
+          name="P&L Réel (€)",
+          line=dict(color="#00CC96", width=2.5),
+          marker=dict(size=6),
+      )
+  )
+
+  # Courbe Théorique
+  fig_pnl.add_trace(
+      go.Scatter(
+          x=df_pnl["date_jour"],
+          y=df_pnl["pnl_theo_cum"],
+          mode="lines+markers",
+          name="P&L Théorique Attendu (€)",
+          line=dict(color="#AB63FA", width=2, dash="dash"),
+          marker=dict(size=6),
+      )
+  )
+
+  fig_pnl.update_layout(
+      template="plotly_dark",
+      xaxis_title="Date",
+      yaxis_title="Euros (€)",
+      hovermode="x unified",
+      legend=dict(
+          orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
+      ),
+      margin=dict(l=20, r=20, t=30, b=20),
+  )
+
+  st.plotly_chart(fig_pnl, use_container_width=True)
+else:
+  st.info("Aucun pari trouvé sur la période sélectionnée.")
+
+# C. MATRICE DE RENTABILITÉ / HEATMAP (LIGUE X MARCHÉ)
+st.markdown("---")
+st.subheader("🔥 Matrice de Rentabilité (Ligue × Type de Marché)")
+
+if not df_filtered.empty:
+  pivot_pnl = df_filtered.pivot_table(
+      index="league",
+      columns="type_marche",
+      values="gains_num",
+      aggfunc="sum",
+      fill_value=0.0,
+  )
+
+  if not pivot_pnl.empty:
+    fig_heatmap = px.imshow(
+        pivot_pnl,
+        text_auto=".2f",
+        aspect="auto",
+        color_continuous_scale="RdYlGn",
+        title="Gain Net (€) par Ligue et Marché",
+    )
+    fig_heatmap.update_layout(
+        template="plotly_dark", xaxis_title="Marché", yaxis_title="Ligue"
+    )
+    st.plotly_chart(fig_heatmap, use_container_width=True)
+else:
+  st.info("Pas assez de données pour afficher la heatmap.")
+
+# D. EXPORT PDF DU BILAN
+st.markdown("---")
+st.subheader("📄 Exportation du Bilan")
+
+if not df_filtered.empty:
+  pdf_bytes = generate_pdf_report(df_filtered, period_choice)
+  st.download_button(
+      label=f"📥 Télécharger le Bilan PDF ({period_choice})",
+      data=pdf_bytes,
+      file_name=f"bilan_value_bets_{period_choice.lower().replace(' ', '_')}.pdf",
+      mime="application/pdf",
+  )
+else:
+  st.warning("Aucune donnée à exporter pour cette période.")
+
 
 # ==========================================
-# 6. PAGE PRINCIPALE & SELECTIONS
+# 8. PAGE PRINCIPALE & SELECTIONS
 # ==========================================
 st.title("🏆 Scanner de Value Bets Pro (Buts & Tirs)")
 
@@ -549,7 +1095,10 @@ idx_h, idx_a = 0, min(1, len(teams_list) - 1)
 
 # Valeurs par défaut de sécurité
 selected_date = datetime.now().strftime("%d/%m/%Y")
-timing_paris = "J-1"
+timing_paris = "1. J-2+"
+
+# 1. Date par défaut (aujourd'hui)
+match_date = datetime.today().date()
 
 if df_fixtures is not None and not df_fixtures.empty:
   code_fd = LEAGUES[league_key]["fd_code"]
@@ -566,8 +1115,6 @@ if df_fixtures is not None and not df_fixtures.empty:
       selected_date_opt = st.selectbox(
           "📅 1. Date", options=["-- Toutes les dates --"] + available_dates
       )
-      if selected_date_opt != "-- Toutes les dates --":
-        selected_date = selected_date_opt
 
     if selected_date_opt != "-- Toutes les dates --":
       filtered_fixtures = league_fixtures[
@@ -600,18 +1147,49 @@ if df_fixtures is not None and not df_fixtures.empty:
       if a_sel in teams_list:
         idx_a = teams_list.index(a_sel)
 
+      # Récupération automatique de la date du match sélectionné
+      match_row = filtered_fixtures[
+          (filtered_fixtures["HomeTeam"] == h_sel)
+          & (filtered_fixtures["AwayTeam"] == a_sel)
+      ]
+      if not match_row.empty:
+        match_date = match_row["Date"].values[0]
+
 st.divider()
 
-col1, col2 = st.columns(2)
+# Saisie / Ajustement manuel
+col1, col2, col3, col4 = st.columns([2, 2, 1,1.2])
+
 with col1:
   home_team = st.selectbox(
       "🏠 Équipe à Domicile", options=teams_list, index=idx_h
   )
+
 with col2:
   away_team = st.selectbox(
       "✈️ Équipe à l'Extérieur", options=teams_list, index=idx_a
   )
 
+with col3:
+  if isinstance(match_date, str):
+    # Si la date vient du fichier fixtures (déjà du texte)
+    final_match_date = match_date
+    st.text_input("📅 Date match", value=final_match_date, disabled=True)
+  else:
+    # Si la date est choisie manuellement via le calendrier
+    user_date = st.date_input("📅 Date match", value=match_date)
+    # On la formate proprement en chaîne de caractères (ex: 25/10/2026)
+    final_match_date = user_date.strftime("%d/%m/%Y")
+
+  # 🟢 AJOUT CRUCIAL : On met à jour la variable transmise à l'exportation
+  selected_date = final_match_date
+    
+with col4:
+  timing_paris = st.selectbox(
+      "⏱️ Timing pari",
+      options=["1. J-2+", "2. J-1", "3. H-12 à H-2", "4. H-2 à H"],
+  )
+      
 # --- LIVE ---
 live_minute, live_home_score, live_away_score = 0, 0, 0
 if match_mode == "En direct (Live)":
@@ -637,7 +1215,7 @@ if match_mode == "En direct (Live)":
 st.divider()
 
 # ==========================================
-# 7. SAISIE DES COTES
+# 9. SAISIE DES COTES
 # ==========================================
 st.subheader("2️⃣ Saisissez les cotes du bookmaker")
 
@@ -648,88 +1226,88 @@ if cat_buts_main:
   ):
     st.markdown("### 🏆 Résultat Match (1X2)")
     c1, c2, c3 = st.columns(3)
-    h_odd = c1.number_input("Cote 1 (Domicile)", value=2.00, step=0.01)
-    d_odd = c2.number_input("Cote X (Nul)", value=3.40, step=0.01)
-    a_odd = c3.number_input("Cote 2 (Extérieur)", value=3.80, step=0.01)
+    h_odd = c1.number_input("Cote 1 (Domicile)", value=None, step=0.01)
+    d_odd = c2.number_input("Cote X (Nul)", value=None, step=0.01)
+    a_odd = c3.number_input("Cote 2 (Extérieur)", value=None, step=0.01)
 
     st.markdown("### 🛡️ Double Chance")
     c1, c2, c3 = st.columns(3)
-    dc_1x = c1.number_input("1X (Dom ou Nul)", value=1.28, step=0.01)
-    dc_12 = c2.number_input("12 (Dom ou Ext)", value=1.30, step=0.01)
-    dc_x2 = c3.number_input("X2 (Nul ou Ext)", value=1.70, step=0.01)
+    dc_1x = c1.number_input("1X (Dom ou Nul)", value=None, step=0.01)
+    dc_12 = c2.number_input("12 (Dom ou Ext)", value=None, step=0.01)
+    dc_x2 = c3.number_input("X2 (Nul ou Ext)", value=None, step=0.01)
 
     st.markdown("### ⚽ Buts & BTTS")
     c1, c2, c3, c4 = st.columns(4)
-    ou_over = c1.number_input("Over 2.5 (Buts)", value=1.90, step=0.01)
-    ou_under = c2.number_input("Under 2.5 (Buts)", value=1.90, step=0.01)
-    btts_yes = c3.number_input("BTTS Oui", value=1.85, step=0.01)
-    btts_no = c4.number_input("BTTS Non", value=1.95, step=0.01)
+    ou_over = c1.number_input("Over 2.5 (Buts)", value=None, step=0.01)
+    ou_under = c2.number_input("Under 2.5 (Buts)", value=None, step=0.01)
+    btts_yes = c3.number_input("BTTS Oui", value=None, step=0.01)
+    btts_no = c4.number_input("BTTS Non", value=None, step=0.01)
 
 if cat_buts_team:
   with st.expander("🥅 BUTS PAR ÉQUIPE (Over / Under 0.5 et 1.5)"):
     st.markdown(f"**🏠 {home_team} (Domicile)**")
     c1, c2, c3, c4 = st.columns(4)
-    hg_o05 = c1.number_input("Over 0.5 (Dom)", value=1.15, step=0.01)
-    hg_u05 = c2.number_input("Under 0.5 (Dom)", value=5.00, step=0.01)
-    hg_o15 = c3.number_input("Over 1.5 (Dom)", value=2.10, step=0.01)
-    hg_u15 = c4.number_input("Under 1.5 (Dom)", value=1.70, step=0.01)
+    hg_o05 = c1.number_input("Over 0.5 (Dom)", value=None, step=0.01)
+    hg_u05 = c2.number_input("Under 0.5 (Dom)", value=None, step=0.01)
+    hg_o15 = c3.number_input("Over 1.5 (Dom)", value=None, step=0.01)
+    hg_u15 = c4.number_input("Under 1.5 (Dom)", value=None, step=0.01)
 
     st.markdown(f"**✈️ {away_team} (Extérieur)**")
     c1, c2, c3, c4 = st.columns(4)
-    ag_o05 = c1.number_input("Over 0.5 (Ext)", value=1.40, step=0.01)
-    ag_u05 = c2.number_input("Under 0.5 (Ext)", value=2.80, step=0.01)
-    ag_o15 = c3.number_input("Over 1.5 (Ext)", value=3.50, step=0.01)
-    ag_u15 = c4.number_input("Under 1.5 (Ext)", value=1.28, step=0.01)
+    ag_o05 = c1.number_input("Over 0.5 (Ext)", value=None, step=0.01)
+    ag_u05 = c2.number_input("Under 0.5 (Ext)", value=None, step=0.01)
+    ag_o15 = c3.number_input("Over 1.5 (Ext)", value=None, step=0.01)
+    ag_u15 = c4.number_input("Under 1.5 (Ext)", value=None, step=0.01)
 
 if cat_shots:
   with st.expander("📊 MARCHÉS DES TIRS & TIRS CADRÉS (Lignes ajustables)"):
     st.markdown("### 🏹 Tirs Totaux (Match)")
     c1, c2, c3 = st.columns(3)
     t_shots_line = c1.number_input(
-        "Ligne de Tirs Match (ex: 24.5)", value=24.5, step=0.5
+        "Ligne de Tirs Match (ex: 24.5)", value=None, step=0.5
     )
     t_shots_o = c2.number_input(
-        "Cote Over Tirs Match", value=1.85, step=0.01, key="ts_o"
+        "Cote Over Tirs Match", value=None, step=0.01, key="ts_o"
     )
     t_shots_u = c3.number_input(
-        "Cote Under Tirs Match", value=1.85, step=0.01, key="ts_u"
+        "Cote Under Tirs Match", value=None, step=0.01, key="ts_u"
     )
 
     st.markdown(f"### 🏠 Tirs Totaux Individuels : {home_team}")
     c1, c2, c3 = st.columns(3)
     h_shots_line = c1.number_input(
-        f"Ligne Tirs Totaux {home_team}", value=13.5, step=0.5
+        f"Ligne Tirs Totaux {home_team}", value=None, step=0.5
     )
-    h_shots_o = c2.number_input("Cote Over Tirs Dom", value=1.85, step=0.01)
-    h_shots_u = c3.number_input("Cote Under Tirs Dom", value=1.85, step=0.01)
+    h_shots_o = c2.number_input("Cote Over Tirs Dom", value=None, step=0.01)
+    h_shots_u = c3.number_input("Cote Under Tirs Dom", value=None, step=0.01)
 
     st.markdown(f"### ✈️ Tirs Totaux Individuels : {away_team}")
     c1, c2, c3 = st.columns(3)
     a_shots_line = c1.number_input(
-        f"Ligne Tirs Totaux {away_team}", value=11.5, step=0.5
+        f"Ligne Tirs Totaux {away_team}", value=None, step=0.5
     )
-    a_shots_o = c2.number_input("Cote Over Tirs Ext", value=1.85, step=0.01)
-    a_shots_u = c3.number_input("Cote Under Tirs Ext", value=1.85, step=0.01)
+    a_shots_o = c2.number_input("Cote Over Tirs Ext", value=None, step=0.01)
+    a_shots_u = c3.number_input("Cote Under Tirs Ext", value=None, step=0.01)
 
     st.markdown("### 🎯 Tirs Cadrés Totaux (Match)")
     c1, c2, c3 = st.columns(3)
     t_sot_line = c1.number_input(
-        "Ligne Tirs Cadrés Match (ex: 8.5)", value=8.5, step=0.5
+        "Ligne Tirs Cadrés Match (ex: 8.5)", value=None, step=0.5
     )
-    t_sot_o = c2.number_input("Cote Over SOT Match", value=1.85, step=0.01)
-    t_sot_u = c3.number_input("Cote Under SOT Match", value=1.85, step=0.01)
+    t_sot_o = c2.number_input("Cote Over SOT Match", value=None, step=0.01)
+    t_sot_u = c3.number_input("Cote Under SOT Match", value=None, step=0.01)
 
     st.markdown(f"### 🏠 Tirs Cadrés Individuels : {home_team}")
     c1, c2, c3 = st.columns(3)
-    h_sot_line = c1.number_input(f"Ligne SOT {home_team}", value=4.5, step=0.5)
-    h_sot_o = c2.number_input("Cote Over SOT Dom", value=1.85, step=0.01)
-    h_sot_u = c3.number_input("Cote Under SOT Dom", value=1.85, step=0.01)
+    h_sot_line = c1.number_input(f"Ligne SOT {home_team}", value=None, step=0.5)
+    h_sot_o = c2.number_input("Cote Over SOT Dom", value=None, step=0.01)
+    h_sot_u = c3.number_input("Cote Under SOT Dom", value=None, step=0.01)
 
     st.markdown(f"### ✈️ Tirs Cadrés Individuels : {away_team}")
     c1, c2, c3 = st.columns(3)
-    a_sot_line = c1.number_input(f"Ligne SOT {away_team}", value=3.5, step=0.5)
-    a_sot_o = c2.number_input("Cote Over SOT Ext", value=1.85, step=0.01)
-    a_sot_u = c3.number_input("Cote Under SOT Ext", value=1.85, step=0.01)
+    a_sot_line = c1.number_input(f"Ligne SOT {away_team}", value=None, step=0.5)
+    a_sot_o = c2.number_input("Cote Over SOT Ext", value=None, step=0.01)
+    a_sot_u = c3.number_input("Cote Under SOT Ext", value=None, step=0.01)
 
 st.divider()
 
@@ -745,11 +1323,11 @@ min_edge = (
 )
 
 # ==========================================
-# 8. MOTEUR D'ANALYSE & AFFICHAGE
+# 10. MOTEUR D'ANALYSE & AFFICHAGE
 # ==========================================
-# -----------------------------------------------------------------------------
-# BOUTON DE LANCEMENT DE L'ANALYSE
-# -----------------------------------------------------------------------------
+
+# BOUTON DE LANCEMENT DE L'ANALYSE 
+
 if st.button(
     "🚀 Lancer l'Analyse Complète", type="primary", use_container_width=True
 ):
@@ -916,87 +1494,92 @@ if st.button(
         var_h_sot *= ratio
         var_a_sot *= ratio
 
-      prob_shots_under, prob_shots_over = proba_tirs_nbinom(
-          lam_h_shots + lam_a_shots,
-          var_h_shots + var_a_shots,
-          t_shots_line,
-      )
-      prob_h_shots_under, prob_h_shots_over = proba_tirs_nbinom(
-          lam_h_shots, var_h_shots, h_shots_line
-      )
-      prob_a_shots_under, prob_a_shots_over = proba_tirs_nbinom(
-          lam_a_shots, var_a_shots, a_shots_line
-      )
+      # Configuration centralisée des marchés Tirs et SOT
+      shots_config = [
+          (
+              "tirs_match",
+              t_shots_line,
+              lam_h_shots + lam_a_shots,
+              var_h_shots + var_a_shots,
+              t_shots_o,
+              t_shots_u,
+          ),
+          (
+              "tirs_domicile",
+              h_shots_line,
+              lam_h_shots,
+              var_h_shots,
+              h_shots_o,
+              h_shots_u,
+          ),
+          (
+              "tirs_exterieur",
+              a_shots_line,
+              lam_a_shots,
+              var_a_shots,
+              a_shots_o,
+              a_shots_u,
+          ),
+          (
+              "sot_match",
+              t_sot_line,
+              lam_h_sot + lam_a_sot,
+              var_h_sot + var_a_sot,
+              t_sot_o,
+              t_sot_u,
+          ),
+          (
+              "sot_domicile",
+              h_sot_line,
+              lam_h_sot,
+              var_h_sot,
+              h_sot_o,
+              h_sot_u,
+          ),
+          (
+              "sot_exterieur",
+              a_sot_line,
+              lam_a_sot,
+              var_a_sot,
+              a_sot_o,
+              a_sot_u,
+          ),
+      ]
 
-      prob_sot_under, prob_sot_over = proba_tirs_nbinom(
-          lam_h_sot + lam_a_sot, var_h_sot + var_a_sot, t_sot_line
-      )
-      prob_h_sot_under, prob_h_sot_over = proba_tirs_nbinom(
-          lam_h_sot, var_h_sot, h_sot_line
-      )
-      prob_a_sot_under, prob_a_sot_over = proba_tirs_nbinom(
-          lam_a_sot, var_a_sot, a_sot_line
-      )
+      # Seuls les marchés dont la ligne/cut est saisie sont calculés
+      for prefix, line, lam, var, odd_o, odd_u in shots_config:
+        if line is not None:
+          prob_u, prob_o = proba_tirs_nbinom(lam, var, line)
+          market_key = f"{prefix}_{line}"
+          preds_all[market_key] = {"over": prob_o, "under": prob_u}
+          market_odds[market_key] = {"over": odd_o, "under": odd_u}
 
-      preds_all.update({
-          f"tirs_match_{t_shots_line}": {
-              "over": prob_shots_over,
-              "under": prob_shots_under,
-          },
-          f"tirs_domicile_{h_shots_line}": {
-              "over": prob_h_shots_over,
-              "under": prob_h_shots_under,
-          },
-          f"tirs_exterieur_{a_shots_line}": {
-              "over": prob_a_shots_over,
-              "under": prob_a_shots_under,
-          },
-          f"sot_match_{t_sot_line}": {
-              "over": prob_sot_over,
-              "under": prob_sot_under,
-          },
-          f"sot_domicile_{h_sot_line}": {
-              "over": prob_h_sot_over,
-              "under": prob_h_sot_under,
-          },
-          f"sot_exterieur_{a_sot_line}": {
-              "over": prob_a_sot_over,
-              "under": prob_a_sot_under,
-          },
-      })
-      market_odds.update({
-          f"tirs_match_{t_shots_line}": {
-              "over": t_shots_o,
-              "under": t_shots_u,
-          },
-          f"tirs_domicile_{h_shots_line}": {
-              "over": h_shots_o,
-              "under": h_shots_u,
-          },
-          f"tirs_exterieur_{a_shots_line}": {
-              "over": a_shots_o,
-              "under": a_shots_u,
-          },
-          f"sot_match_{t_sot_line}": {"over": t_sot_o, "under": t_sot_u},
-          f"sot_domicile_{h_sot_line}": {"over": h_sot_o, "under": h_sot_u},
-          f"sot_exterieur_{a_sot_line}": {"over": a_sot_o, "under": a_sot_u},
-      })
 
     # 3. Moteur de Value Bets
     results = []
     for market, odds in market_odds.items():
       for sel, odd in odds.items():
-        prob = preds_all[market][sel]
-        edge = prob * odd - 1
-
-        if edge > min_edge and (cote_min <= odd <= cote_max):
-          b = odd - 1
-          kelly_quart = (
-              max(0.0, (b * prob - (1 - prob)) / b) * 0.25 if b > 0 else 0.0
-          )
-          results.append(
-              ValueBetResult(market, sel, prob, odd, edge, kelly_quart)
-          )
+        # 1. Si la cote n'a pas été saisie (None), on passe au suivant
+        if odd is None:
+          continue
+    
+        # 2. Sécurité sur les bornes (au cas où cote_min ou cote_max dans le sidebar valaient None)
+        c_min = cote_min if cote_min is not None else 1.50
+        c_max = cote_max if cote_max is not None else 2.30
+    
+        # 3. Vérification de la tranche [1.50 - 2.30]
+        if c_min <= odd <= c_max:
+          prob = preds_all[market][sel]
+          edge = prob * odd - 1
+    
+          if edge > min_edge:
+            b = odd - 1
+            kelly_quart = (
+                max(0.0, (b * prob - (1 - prob)) / b) * 0.25 if b > 0 else 0.0
+            )
+            results.append(
+                ValueBetResult(market, sel, prob, odd, edge, kelly_quart)
+            )
 
     results.sort(key=lambda x: x.edge, reverse=True)
 
@@ -1022,7 +1605,7 @@ if st.button(
     }
 
 # -----------------------------------------------------------------------------
-# 2. AFFICHAGE DU RAPPORT & BOUTONS D'EXPORT (SÉPARÉS DU BOUTON PRINCIPAL)
+# 11. AFFICHAGE DU RAPPORT & BOUTONS D'EXPORT (SÉPARÉS DU BOUTON PRINCIPAL)
 # -----------------------------------------------------------------------------
 if "analysis_data" in st.session_state:
   data = st.session_state["analysis_data"]
