@@ -395,6 +395,91 @@ def fetch_raw_data_from_sheets(
 # 3. FONCTIONS HELPER DE TRAITEMENT
 # ==========================================
 
+def compute_top_league(df_subset):
+  """Calcule dynamiquement la meilleure ligue sur le DataFrame filtré.
+
+  Index 4-facteurs : PnL (40%), ROI (25%), Volume Log (20%), Edge (15%).
+  """
+  if df_subset is None or df_subset.empty:
+    return "Aucun pari"
+
+  # Détection des colonnes par nom ou position
+  col_league = (
+      "league" if "league" in df_subset.columns else df_subset.columns[3]
+  )
+  col_gains = (
+      "gains_num" if "gains_num" in df_subset.columns else df_subset.columns[14]
+  )
+  col_mises = (
+      "mises_num" if "mises_num" in df_subset.columns else df_subset.columns[12]
+  )
+  col_edge = (
+      "edge_pct" if "edge_pct" in df_subset.columns else df_subset.columns[10]
+  )
+
+  # Nettoyage des lignes non pertinentes
+  df_valid = df_subset[
+      ~df_subset[col_league]
+      .astype(str)
+      .str.contains("€|Total|Bankroll|Live|Avant", case=False, na=False)
+      & (df_subset[col_league].astype(str).str.strip() != "")
+  ].copy()
+
+  if df_valid.empty:
+    return "Aucun pari"
+
+  df_valid["league_clean"] = df_valid[col_league].astype(str).str.strip()
+
+  # Agrégation par ligue
+  stats = (
+      df_valid.groupby("league_clean")
+      .agg(
+          pnl=(col_gains, "sum"),
+          mises=(col_mises, "sum"),
+          nb_bets=("league_clean", "count"),
+          avg_edge=(col_edge, "mean"),
+      )
+      .reset_index()
+  )
+
+  # Calcul du ROI (%)
+  stats["roi"] = np.where(
+      stats["mises"] > 0, (stats["pnl"] / stats["mises"]) * 100.0, 0.0
+  )
+
+  # Isolement des P&L positifs
+  pos_stats = stats[stats["pnl"] > 0].copy()
+  if pos_stats.empty:
+    return "Aucun P&L positif"
+
+  # Normalisation Min-Max (0 à 1)
+  def normalize(series):
+    s_min, s_max = series.min(), series.max()
+    return (series - s_min) / (s_max - s_min) if s_max > s_min else 1.0
+
+  norm_pnl = normalize(pos_stats["pnl"])
+  norm_roi = normalize(pos_stats["roi"])
+
+  # --- MODIFICATION LOGARITHMIQUE DU VOLUME ICI ---
+  norm_vol = normalize(np.log1p(pos_stats["nb_bets"]))
+
+  norm_edge = normalize(pos_stats["avg_edge"])
+
+  # Application des coefficients (40% PnL, 25% ROI, 20% Volume log, 15% Edge)
+  w_pnl, w_roi, w_vol, w_edge = 0.40, 0.25, 0.20, 0.15
+  pos_stats["score"] = (
+      (w_pnl * norm_pnl)
+      + (w_roi * norm_roi)
+      + (w_vol * norm_vol)
+      + (w_edge * norm_edge)
+  )
+
+  # Sélection de la ligue gagnante
+  best = pos_stats.sort_values(by="score", ascending=False).iloc[0]
+  pnl_formatted = f"{best['pnl']:+,.2f} €".replace(",", " ")
+  return f"{best['league_clean']} ({pnl_formatted} | {best['roi']:+.1f}%)"
+
+
 def prepare_dataframe(df_raw):
   """Prépare et nettoie le DataFrame brut de Google Sheets pour tous les modules."""
   if df_raw is None or df_raw.empty:
@@ -476,6 +561,19 @@ def filter_by_period(df, period_choice):
   else:  # "Tout l'Historique"
     return df.copy()
 
+
+# CALCUL DYNAMIQUE DES TOP LIGUES SUR LE FILTRE ACTIF
+
+if "type_marche" in df_filtered.columns:
+  tirs_mask = df_filtered["type_marche"] == "Tirs & Cadrés"
+else:
+  tirs_mask = df_filtered["pari"].str.contains(
+      "Cut|shots|sot|Tirs", case=False, na=False
+  )
+
+top_league_global = compute_top_league(df_filtered)
+top_league_buts = compute_top_league(df_filtered[~tirs_mask])
+top_league_tirs = compute_top_league(df_filtered[tirs_mask])
 
 # ==========================================
 # 4. GENERATEUR DE PDF (BILAN)
@@ -907,10 +1005,16 @@ st.sidebar.progress(pct_buts)
 st.sidebar.markdown("---")
 st.sidebar.markdown("**💰 Bilan Financier**")
 
+# --- SECTION SIDEBAR : BILAN & TOP LIGUES DYNAMIQUES ---
+st.sidebar.markdown("---")
+st.sidebar.markdown("**💰 Bilan Financier**")
+
 fin_col1, fin_col2 = st.sidebar.columns(2)
 with fin_col1:
-  st.metric(label="Mises Totales", value=f"{total_mises:,.2f} €".replace(",", " "))
-  st.metric(
+  st.sidebar.metric(
+      label="Mises Totales", value=f"{total_mises:,.2f} €".replace(",", " ")
+  )
+  st.sidebar.metric(
       label="ROI Réel",
       value=f"{roi_reel:+.1f}%",
       delta=(
@@ -921,13 +1025,21 @@ with fin_col1:
   )
 
 with fin_col2:
-  st.metric(
+  st.sidebar.metric(
       label="P&L Net",
       value=f"{total_gains:+,.2f} €".replace(",", " "),
       delta=f"{roi_reel:+.1f}% ROI" if (metrics and total_vbs > 0) else None,
   )
 
+# --- BLOC TOP LIGUES RACCORDÉ AU FILTRE TEMPOREL ---
+st.sidebar.markdown("---")
+st.sidebar.markdown("**🏆 Top Ligues (Période Active)**")
+st.sidebar.metric(label="🌐 Global", value=top_league_global)
+st.sidebar.metric(label="⚽ Marchés Buts", value=top_league_buts)
+st.sidebar.metric(label="📊 Marchés Tirs", value=top_league_tirs)
+
 st.sidebar.divider()
+
 
 # ==========================================
 # 3. INTERFACE PRINCIPALE & NOUVEAUX MODULES
