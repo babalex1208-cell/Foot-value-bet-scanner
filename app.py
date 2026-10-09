@@ -241,7 +241,7 @@ def compute_top_league(df_subset):
   """Calcule dynamiquement la meilleure ligue sur le DataFrame filtré.
 
   Index 4-facteurs : PnL (40%), ROI (25%), Volume Log (20%), Edge (15%).
-  Format de retour : Ligue (PnL | ROI | Volume | Edge Moyen)
+  Format de retour : Ligue (PnL | ROI | Volume | Edge Moyen ± Écart-type)
   """
   if df_subset is None or df_subset.empty:
     return "Aucun pari"
@@ -278,10 +278,12 @@ def compute_top_league(df_subset):
           mises=(col_mises, "sum"),
           nb_bets=("league_clean", "count"),
           avg_edge=(col_edge, "mean"),
+          std_edge=(col_edge, "std"),
       )
       .reset_index()
   )
 
+  stats["std_edge"] = stats["std_edge"].fillna(0.0)
   stats["roi"] = np.where(
       stats["mises"] > 0, (stats["pnl"] / stats["mises"]) * 100.0, 0.0
   )
@@ -311,11 +313,12 @@ def compute_top_league(df_subset):
   pnl_formatted = f"{best['pnl']:+,.2f} €".replace(",", " ")
   nb_bets_val = int(best["nb_bets"])
   bets_label = "pari" if nb_bets_val == 1 else "paris"
+  std_val = best["std_edge"]
 
-  # NOUVEAU FORMAT : (PnL | ROI | Volume | Edge Moyen)
+  # FORMAT AVEC ÉCART-TYPE : (PnL | ROI | Volume | Edge ± σ)
   return (
       f"{best['league_clean']} ({pnl_formatted} | {best['roi']:+.1f}% |"
-      f" {nb_bets_val} {bets_label} | {best['avg_edge']:+.1f}% edge)"
+      f" {nb_bets_val} {bets_label} | {best['avg_edge']:+.1f}% ± {std_val:.1f}% edge)"
   )
 
 
@@ -374,7 +377,7 @@ def prepare_dataframe(df_raw):
 
 
 def filter_by_period(df, period_choice):
-  """Filtre le DataFrame selon la période choisie dans le sélecteur."""
+  """Filtre le DataFrame selon la période choisie dans le sélecteur (sans MTD)."""
   if df is None or df.empty:
     return pd.DataFrame()
 
@@ -386,14 +389,21 @@ def filter_by_period(df, period_choice):
   elif period_choice == "30 Derniers Jours":
     cutoff = now - pd.Timedelta(days=30)
     return df[df["parsed_date"] >= cutoff].copy()
-  elif period_choice == "Mois en Cours (MTD)":
-    start_of_month = pd.Timestamp(now.year, now.month, 1)
-    return df[df["parsed_date"] >= start_of_month].copy()
   elif period_choice == "Année en Cours (YTD)":
     start_of_year = pd.Timestamp(now.year, 1, 1)
     return df[df["parsed_date"] >= start_of_year].copy()
   else:  # "Tout l'Historique"
     return df.copy()
+
+
+def get_financial_summary(df_sub):
+  """Helper pour calculer les métriques financières d'un sous-ensemble."""
+  if df_sub is None or df_sub.empty:
+    return {"mises": 0.0, "pnl": 0.0, "roi": 0.0, "vbs": 0}
+  mises = df_sub["mises_num"].sum()
+  pnl = df_sub["gains_num"].sum()
+  roi = (pnl / mises * 100.0) if mises > 0 else 0.0
+  return {"mises": mises, "pnl": pnl, "roi": roi, "vbs": len(df_sub)}
 
 
 def generate_pdf_report(df_filtered, period_label):
@@ -739,7 +749,6 @@ period_choice = st.selectbox(
     [
         "7 Derniers Jours",
         "30 Derniers Jours",
-        "Mois en Cours (MTD)",
         "Année en Cours (YTD)",
         "Tout l'Historique",
     ],
@@ -749,7 +758,7 @@ period_choice = st.selectbox(
 # Application immédiate du filtre temporel
 df_filtered = filter_by_period(df_all, period_choice)
 
-# CALCUL DES MÉTRIQUES DYNAMIQUES SUR LE FILTRE ACTIF
+# CALCUL DES MÉTRIQUES DYNAMIQUES & FINANCIAL BREAKDOWN
 if not df_filtered.empty:
   total_vbs = len(df_filtered)
   avg_odds = (
@@ -757,34 +766,41 @@ if not df_filtered.empty:
       if not df_filtered[df_filtered["odds_num"] > 1.0].empty
       else 0.0
   )
-  avg_edge = (
-      df_filtered["edge_pct"][df_filtered["edge_pct"] != 0].mean()
-      if not df_filtered[df_filtered["edge_pct"] != 0].empty
-      else 0.0
-  )
-  expected_roi = avg_edge
-  total_mises = df_filtered["mises_num"].sum()
-  total_gains = df_filtered["gains_num"].sum()
-  roi_reel = (total_gains / total_mises * 100) if total_mises > 0 else 0.0
 
+  # Edge Moyen + Écart-type Global
+  valid_edges = df_filtered["edge_pct"][df_filtered["edge_pct"] != 0]
+  avg_edge = valid_edges.mean() if not valid_edges.empty else 0.0
+  std_edge = valid_edges.std() if len(valid_edges) > 1 else 0.0
+  expected_roi = avg_edge
+
+  # Masques de marchés
   tirs_mask = df_filtered["type_marche"] == "Tirs & Cadrés"
+  df_buts = df_filtered[~tirs_mask]
+  df_tirs = df_filtered[tirs_mask]
+
   tirs_count = tirs_mask.sum()
   pct_tirs = tirs_count / total_vbs if total_vbs > 0 else 0.5
   pct_buts = 1.0 - pct_tirs
 
+  # Bilans Financiers Découpés (Global, Buts, Tirs)
+  fin_global = get_financial_summary(df_filtered)
+  fin_buts = get_financial_summary(df_buts)
+  fin_tirs = get_financial_summary(df_tirs)
+
   # Top Ligues raccordées au filtre temporel actif
   top_league_global = compute_top_league(df_filtered)
-  top_league_buts = compute_top_league(df_filtered[~tirs_mask])
-  top_league_tirs = compute_top_league(df_filtered[tirs_mask])
+  top_league_buts = compute_top_league(df_buts)
+  top_league_tirs = compute_top_league(df_tirs)
 else:
   total_vbs = 0
   avg_odds = 0.0
   avg_edge = 0.0
+  std_edge = 0.0
   expected_roi = 0.0
-  total_mises = 0.0
-  total_gains = 0.0
-  roi_reel = 0.0
   pct_buts, pct_tirs = 0.5, 0.5
+  fin_global = {"mises": 0.0, "pnl": 0.0, "roi": 0.0, "vbs": 0}
+  fin_buts = {"mises": 0.0, "pnl": 0.0, "roi": 0.0, "vbs": 0}
+  fin_tirs = {"mises": 0.0, "pnl": 0.0, "roi": 0.0, "vbs": 0}
   top_league_global = "Aucun pari"
   top_league_buts = "Aucun pari"
   top_league_tirs = "Aucun pari"
@@ -820,14 +836,16 @@ if st.sidebar.button("🔄 Purger le cache & Actualiser"):
 
 st.sidebar.subheader(f"📊 Performance ({period_choice})")
 
-# 1. KPIs de Volume & Cotes
+# 1. KPIs de Volume & Cotes (+ Écart-type d'Edge)
 kpi_col1, kpi_col2 = st.sidebar.columns(2)
 with kpi_col1:
   st.sidebar.metric(label="Value Bets", value=f"{total_vbs}")
   st.sidebar.metric(label="Cote Moyenne", value=f"{avg_odds:.2f}")
 
 with kpi_col2:
-  st.sidebar.metric(label="Edge Moyen", value=f"+{avg_edge:.1f}%")
+  st.sidebar.metric(
+      label="Edge Moyen", value=f"+{avg_edge:.1f}% ± {std_edge:.1f}%"
+  )
   st.sidebar.metric(label="ROI Théorique", value=f"+{expected_roi:.1f}%")
 
 # 2. Répartition des Marchés (Buts vs Tirs)
@@ -835,31 +853,53 @@ st.sidebar.markdown("**🎯 Répartition Marchés**")
 st.sidebar.caption(f"{pct_buts:.0%} Buts  |  {pct_tirs:.0%} Tirs")
 st.sidebar.progress(pct_buts)
 
-# 3. Bilan Financier Réel
+# 3. Bilan Financier Tripartite (Global, Buts, Tirs)
 st.sidebar.markdown("---")
 st.sidebar.markdown("**💰 Bilan Financier**")
 
-fin_col1, fin_col2 = st.sidebar.columns(2)
-with fin_col1:
+# A. Global
+st.sidebar.markdown("🌐 **Global**")
+fg1, fg2 = st.sidebar.columns(2)
+with fg1:
   st.sidebar.metric(
-      label="Mises Totales", value=f"{total_mises:,.2f} €".replace(",", " ")
+      label="Mises Totales",
+      value=f"{fin_global['mises']:,.2f} €".replace(",", " "),
   )
+  st.sidebar.metric(label="ROI Réel", value=f"{fin_global['roi']:+.1f}%")
+with fg2:
   st.sidebar.metric(
-      label="ROI Réel",
-      value=f"{roi_reel:+.1f}%",
-      delta=(
-          f"{roi_reel - expected_roi:+.1f}% vs Théo" if total_vbs > 0 else None
-      ),
-  )
-
-with fin_col2:
-  st.sidebar.metric(
-      label="P&L Net",
-      value=f"{total_gains:+,.2f} €".replace(",", " "),
-      delta=f"{roi_reel:+.1f}% ROI" if total_vbs > 0 else None,
+      label="P&L Net", value=f"{fin_global['pnl']:+,.2f} €".replace(",", " ")
   )
 
-# --- TOP LIGUES : AFFICHAGE COMPACT (POLICE RÉDUITE DE MOITIÉ) ---
+# B. Marchés Buts
+st.sidebar.markdown("⚽ **Marchés Buts**")
+fb1, fb2 = st.sidebar.columns(2)
+with fb1:
+  st.sidebar.metric(
+      label="Mises (Buts)",
+      value=f"{fin_buts['mises']:,.2f} €".replace(",", " "),
+  )
+  st.sidebar.metric(label="ROI (Buts)", value=f"{fin_buts['roi']:+.1f}%")
+with fb2:
+  st.sidebar.metric(
+      label="P&L (Buts)", value=f"{fin_buts['pnl']:+,.2f} €".replace(",", " ")
+  )
+
+# C. Marchés Tirs
+st.sidebar.markdown("📊 **Marchés Tirs**")
+ft1, ft2 = st.sidebar.columns(2)
+with ft1:
+  st.sidebar.metric(
+      label="Mises (Tirs)",
+      value=f"{fin_tirs['mises']:,.2f} €".replace(",", " "),
+  )
+  st.sidebar.metric(label="ROI (Tirs)", value=f"{fin_tirs['roi']:+.1f}%")
+with ft2:
+  st.sidebar.metric(
+      label="P&L (Tirs)", value=f"{fin_tirs['pnl']:+,.2f} €".replace(",", " ")
+  )
+
+# --- TOP LIGUES : AFFICHAGE COMPACT (POLICE RÉDUITE) ---
 st.sidebar.markdown("---")
 st.sidebar.markdown("**🏆 Top Ligues (Période Active)**")
 
@@ -1157,7 +1197,7 @@ if cat_buts_main:
     btts_no = c4.number_input("BTTS Non", value=None, step=0.01)
 
 if cat_buts_team:
-  with st.expander("🥅 BUTS PAR ÉQUIPE (Over / Under 0.5 et 1.5)"):
+  with st.expander("角 BUTS PAR ÉQUIPE (Over / Under 0.5 et 1.5)"):
     st.markdown(f"**🏠 {home_team} (Domicile)**")
     c1, c2, c3, c4 = st.columns(4)
     hg_o05 = c1.number_input("Over 0.5 (Dom)", value=None, step=0.01)
