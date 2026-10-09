@@ -991,6 +991,7 @@ if not df_filtered.empty:
           mode="lines+markers",
           name="P&L Réel (€)",
           line=dict(color="#00CC96", width=2.5),
+          marker=dict(size=6),
       )
   )
 
@@ -999,9 +1000,10 @@ if not df_filtered.empty:
       go.Scatter(
           x=df_pnl["date_jour"],
           y=df_pnl["pnl_theo_cum"],
-          mode="lines",
+          mode="lines+markers",
           name="P&L Théorique Attendu (€)",
           line=dict(color="#AB63FA", width=2, dash="dash"),
+          marker=dict(size=6),
       )
   )
 
