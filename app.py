@@ -5,20 +5,19 @@ import math
 import ssl
 import urllib.request
 import cloudscraper
+from fpdf import FPDF
 import gspread
 import numpy as np
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import requests
 from scipy.optimize import minimize
 from scipy.stats import nbinom, poisson
 import streamlit as st
-import re
-import plotly.graph_objects as go
-from fpdf import FPDF
 
 # ==========================================
-# 1. CONFIGURATION (Doit être la toute première commande Streamlit)
+# 1. CONFIGURATION
 # ==========================================
 st.set_page_config(
     page_title="Value Bet Scanner Pro", page_icon="⚽", layout="wide"
@@ -42,13 +41,14 @@ LEAGUES = {
 SEASONS = ["2425", "2526", "2627"]
 TIME_DECAY_HALFLIFE_DAYS = 180
 
-
-# =========================================================
-# 2. FONCTIONS DE CONNEXION ET FORMATAGE GOOGLE SHEETS
-# =========================================================
-
-# ID du Google Sheet (à récupérer dans l'URL de ton navigateur)
+# ID du Google Sheet
 SPREADSHEET_ID = "11fcyQntgVPi2xjF0GXIeKAZkXrhRkwq2sfysO325kaI"
+
+
+# =========================================================
+# 2. FONCTIONS GOOGLE SHEETS
+# =========================================================
+
 
 def get_gspread_client():
   """Connexion à l'API Google Sheets via st.secrets."""
@@ -113,35 +113,30 @@ def build_sheets_row(
   bet_name, cut_str = format_bet_details(
       vb.market, vb.selection, home_team, away_team
   )
-
-  # Nettoyage du championnat (ne garde que la compétition)
   clean_league = (
       league_name.split(" - ")[-1] if " - " in str(league_name) else league_name
   )
-
-  # Edge et Kelly sous forme décimale (ex: 0.0912 pour 9,12%)
   edge_val = round(float(vb.edge), 4)
   kelly_val = round(float(vb.kelly_quart), 4)
 
   return [
-      str(match_date),  # A: Dates
-      "Live" if match_mode == "En direct (Live)" else "Avant",  # B: Avant/Live
-      timing_paris,  # C: Timing prise de paris
-      clean_league,  # D: Championnat
-      f"{home_team} / {away_team}",  # E: Match
-      bet_name,  # F: Paris
-      cut_str,  # G: Cut tirs
-      float(vb.bookmaker_odds),  # H: Cotes prises (float)
-      "",  # I: Closing odds
-      "",  # J: CLV
-      edge_val,  # K: Edge (ex: 0.05)
-      kelly_val,  # L: Quart Kelly (ex: 0.02)
-      "",  # M: Mise Paris
-      "",  # N: Resultats paris
-      "",  # O: Gains/Pertes
-      "",  # P: Bankroll hebdomadaire
+      str(match_date),
+      "Live" if match_mode == "En direct (Live)" else "Avant",
+      timing_paris,
+      clean_league,
+      f"{home_team} / {away_team}",
+      bet_name,
+      cut_str,
+      float(vb.bookmaker_odds),
+      "",
+      "",
+      edge_val,
+      kelly_val,
+      "",
+      "",
+      "",
+      "",
   ]
-
 
 
 def export_all_value_bets_to_sheet(
@@ -155,12 +150,9 @@ def export_all_value_bets_to_sheet(
     spreadsheet_id=SPREADSHEET_ID,
     worksheet_name="Suivi Value Bets Global",
 ):
-  """Exporte la liste complète des Value Bets détectés en une seule requête via l'ID du Google Sheet."""
   try:
     gc = get_gspread_client()
-    # Ouverture du fichier via son ID unique et ciblage de l'onglet
     sh = gc.open_by_key(spreadsheet_id).worksheet(worksheet_name)
-
     rows_data = [
         build_sheets_row(
             vb,
@@ -173,8 +165,7 @@ def export_all_value_bets_to_sheet(
         )
         for vb in results
     ]
-    # table_range = "A1" force l'alignement à partir de la colonne A
-    sh.append_rows(rows_data, value_input_option="USER_ENTERED",table_range="A1")
+    sh.append_rows(rows_data, value_input_option="USER_ENTERED", table_range="A1")
     return True
   except Exception as e:
     st.error(f"Erreur lors de l'exportation globale vers Google Sheets : {e}")
@@ -192,12 +183,9 @@ def export_value_bet_to_sheet(
     spreadsheet_id=SPREADSHEET_ID,
     worksheet_name="Suivi Value Bets Global",
 ):
-  """Exporte un seul Value Bet vers Google Sheets via l'ID du Google Sheet."""
   try:
     gc = get_gspread_client()
-    # Ouverture du fichier via son ID unique et ciblage de l'onglet
     sh = gc.open_by_key(spreadsheet_id).worksheet(worksheet_name)
-
     row_data = build_sheets_row(
         vb,
         match_date,
@@ -207,161 +195,14 @@ def export_value_bet_to_sheet(
         home_team,
         away_team,
     )
-    sh.append_row(row_data, value_input_option="USER_ENTERED",table_range="A1")
+    sh.append_row(row_data, value_input_option="USER_ENTERED", table_range="A1")
     return True
   except Exception as e:
     st.error(f"Erreur lors de l'exportation vers Google Sheets : {e}")
     return False
 
 
-@st.cache_data(ttl=60)  # Réduit à 60 secondes pour une réactivité optimale
-def get_sidebar_metrics(
-    spreadsheet_id=SPREADSHEET_ID, worksheet_name="Suivi Value Bets Global"
-):
-  """Lit l'onglet spécifié du Google Sheet et calcule les statistiques sur les 7 derniers jours."""
-  try:
-    gc = get_gspread_client()
-    sh = gc.open_by_key(spreadsheet_id).worksheet(worksheet_name)
-    data = sh.get_all_values()
-
-    if not data or len(data) < 2:
-      return None
-
-    # 1. RECHERCHE DYNAMIQUE DE LA LIGNE D'EN-TÊTE ("Date")
-    header_idx = -1
-    for i, row in enumerate(data):
-      if row and str(row[0]).strip().lower() == "date":
-        header_idx = i
-        break
-
-    if header_idx != -1 and header_idx + 1 < len(data):
-      rows_data = data[header_idx + 1 :]
-    else:
-      rows_data = data[1:]
-
-    df_bets = pd.DataFrame(rows_data)
-    if df_bets.empty:
-      return None
-
-    # Indexation des colonnes (A=0, D=3, F=5, H=7, K=10, M=12, O=14)
-    col_date, col_league, col_paris = 0, 3, 5
-    col_odds, col_edge, col_mises, col_gains_pertes = 7, 10, 12, 14
-
-    # 2. PARSING SOUPLE ET ROBUSTE DES DATES
-    raw_dates = df_bets[col_date].astype(str).str.strip().str.split(" ").str[0]
-    df_bets["parsed_date"] = pd.to_datetime(
-        raw_dates, dayfirst=True, errors="coerce"
-    )
-
-    # Conservation uniquement des lignes avec une date valide
-    df_bets = df_bets.dropna(subset=["parsed_date"]).copy()
-
-    now = pd.Timestamp.now()
-    cutoff_7j = now - pd.Timedelta(days=7)
-    cutoff_14j = now - pd.Timedelta(days=14)
-
-    # Filtrage strict sur les 7 derniers jours
-    df_7j = df_bets[
-        (df_bets["parsed_date"] >= cutoff_7j)
-        & (df_bets["parsed_date"] <= now)
-    ].copy()
-    df_s1 = df_bets[
-        (df_bets["parsed_date"] >= cutoff_14j)
-        & (df_bets["parsed_date"] < cutoff_7j)
-    ].copy()
-
-    total_vbs = len(df_7j)
-    total_s1 = len(df_s1)
-    delta_vbs = total_vbs - total_s1
-
-    # 3. SI AUCUN PARI DANS LES 7 DERNIERS JOURS : RETOUR À ZERO STRICT
-    if total_vbs == 0:
-      return {
-          "total_vbs": 0,
-          "delta_vbs": delta_vbs,
-          "avg_edge": 0.0,
-          "avg_odds": 0.0,
-          "expected_roi": 0.0,
-          "top_league": "Aucun pari (7j)",
-          "pct_buts": 0.5,
-          "pct_tirs": 0.5,
-          "total_mises": 0.0,
-          "total_gains_pertes": 0.0,
-          "roi_reel": 0.0,
-      }
-
-    # 4. NETTOYAGE ET CONVERSIONS NUMÉRIQUES
-    def clean_num_series(series):
-      s = (
-          series.astype(str)
-          .str.replace("€", "", regex=False)
-          .str.replace("%", "", regex=False)
-          .str.replace(" ", "", regex=False)
-          .str.replace("\xa0", "", regex=False)
-          .str.replace(",", ".", regex=False)
-          .str.strip()
-      )
-      extracted = s.str.extract(r"(-?\d+\.?\d*)")[0]
-      return pd.to_numeric(extracted, errors="coerce").fillna(0.0)
-
-    df_7j["odds_num"] = clean_num_series(df_7j[col_odds])
-    df_7j["edge_num"] = clean_num_series(df_7j[col_edge])
-    df_7j["mises_num"] = clean_num_series(df_7j[col_mises])
-    df_7j["gains_num"] = clean_num_series(df_7j[col_gains_pertes])
-
-    # Edge (Ajustement facteur 100 si nécessaire)
-    edges = df_7j[df_7j["edge_num"] != 0]["edge_num"]
-    if not edges.empty:
-      mean_raw_edge = edges.mean()
-      avg_edge = (
-          mean_raw_edge if mean_raw_edge > 1.0 else mean_raw_edge * 100
-      )
-    else:
-      avg_edge = 0.0
-
-    odds_valid = df_7j[df_7j["odds_num"] > 1.0]["odds_num"]
-    avg_odds = odds_valid.mean() if not odds_valid.empty else 0.0
-
-    total_mises = df_7j["mises_num"].sum()
-    total_gains_pertes = df_7j["gains_num"].sum()
-    roi_reel = (
-        (total_gains_pertes / total_mises) * 100 if total_mises > 0 else 0.0
-    )
-
-    # Top Ligue
-    leagues = df_7j[col_league].astype(str).str.strip()
-    clean_leagues = leagues[
-        ~leagues.str.contains("€|Total|Bankroll|Live|Avant", case=False)
-        & (leagues != "")
-    ]
-    top_league = (
-        clean_leagues.mode().iloc[0] if not clean_leagues.empty else "N/A"
-    )
-
-    # Répartition Buts vs Tirs
-    tirs_mask = df_7j[col_paris].astype(str).str.contains(
-        "Cut|shots|sot|Tirs", case=False
-    )
-    tirs_count = tirs_mask.sum()
-    pct_tirs = (tirs_count / total_vbs) if total_vbs > 0 else 0.5
-    pct_buts = 1.0 - pct_tirs
-
-    return {
-        "total_vbs": total_vbs,
-        "delta_vbs": delta_vbs,
-        "avg_edge": round(avg_edge, 1),
-        "avg_odds": round(avg_odds, 2),
-        "expected_roi": round(avg_edge, 1),
-        "top_league": top_league,
-        "pct_buts": pct_buts,
-        "pct_tirs": pct_tirs,
-        "total_mises": round(total_mises, 2),
-        "total_gains_pertes": round(total_gains_pertes, 2),
-        "roi_reel": round(roi_reel, 2),
-    }
-  except Exception:
-    return None
-
+@st.cache_data(ttl=60)
 def fetch_raw_data_from_sheets(
     spreadsheet_id=SPREADSHEET_ID, worksheet_name="Suivi Value Bets Global"
 ):
@@ -374,7 +215,6 @@ def fetch_raw_data_from_sheets(
     if not data or len(data) < 2:
       return pd.DataFrame()
 
-    # Détection dynamique de la ligne d'en-tête "Date"
     header_idx = -1
     for i, row in enumerate(data):
       if row and str(row[0]).strip().lower() == "date":
@@ -391,9 +231,95 @@ def fetch_raw_data_from_sheets(
     st.error(f"Erreur lors de la récupération du Google Sheet : {e}")
     return pd.DataFrame()
 
+
 # ==========================================
-# 3. FONCTIONS HELPER DE TRAITEMENT
+# 3. HELPER FUNCTIONS & DATA PREPARATION
 # ==========================================
+
+
+def compute_top_league(df_subset):
+  """Calcule dynamiquement la meilleure ligue sur le DataFrame filtré.
+
+  Index 4-facteurs : PnL (40%), ROI (25%), Volume Log (20%), Edge (15%).
+  Format de retour : Ligue (PnL | ROI | Volume | Edge Moyen ± Écart-type)
+  """
+  if df_subset is None or df_subset.empty:
+    return "Aucun pari"
+
+  col_league = (
+      "league" if "league" in df_subset.columns else df_subset.columns[3]
+  )
+  col_gains = (
+      "gains_num" if "gains_num" in df_subset.columns else df_subset.columns[14]
+  )
+  col_mises = (
+      "mises_num" if "mises_num" in df_subset.columns else df_subset.columns[12]
+  )
+  col_edge = (
+      "edge_pct" if "edge_pct" in df_subset.columns else df_subset.columns[10]
+  )
+
+  df_valid = df_subset[
+      ~df_subset[col_league]
+      .astype(str)
+      .str.contains("€|Total|Bankroll|Live|Avant", case=False, na=False)
+      & (df_subset[col_league].astype(str).str.strip() != "")
+  ].copy()
+
+  if df_valid.empty:
+    return "Aucun pari"
+
+  df_valid["league_clean"] = df_valid[col_league].astype(str).str.strip()
+
+  stats = (
+      df_valid.groupby("league_clean")
+      .agg(
+          pnl=(col_gains, "sum"),
+          mises=(col_mises, "sum"),
+          nb_bets=("league_clean", "count"),
+          avg_edge=(col_edge, "mean"),
+          std_edge=(col_edge, "std"),
+      )
+      .reset_index()
+  )
+
+  stats["std_edge"] = stats["std_edge"].fillna(0.0)
+  stats["roi"] = np.where(
+      stats["mises"] > 0, (stats["pnl"] / stats["mises"]) * 100.0, 0.0
+  )
+
+  pos_stats = stats[stats["pnl"] > 0].copy()
+  if pos_stats.empty:
+    return "Aucun P&L positif"
+
+  def normalize(series):
+    s_min, s_max = series.min(), series.max()
+    return (series - s_min) / (s_max - s_min) if s_max > s_min else 1.0
+
+  norm_pnl = normalize(pos_stats["pnl"])
+  norm_roi = normalize(pos_stats["roi"])
+  norm_vol = normalize(np.log1p(pos_stats["nb_bets"]))
+  norm_edge = normalize(pos_stats["avg_edge"])
+
+  w_pnl, w_roi, w_vol, w_edge = 0.40, 0.25, 0.20, 0.15
+  pos_stats["score"] = (
+      (w_pnl * norm_pnl)
+      + (w_roi * norm_roi)
+      + (w_vol * norm_vol)
+      + (w_edge * norm_edge)
+  )
+
+  best = pos_stats.sort_values(by="score", ascending=False).iloc[0]
+  pnl_formatted = f"{best['pnl']:+,.2f} €".replace(",", " ")
+  nb_bets_val = int(best["nb_bets"])
+  bets_label = "pari" if nb_bets_val == 1 else "paris"
+  std_val = best["std_edge"]
+
+  return (
+      f"{best['league_clean']} ({pnl_formatted} | {best['roi']:+.1f}% |"
+      f" {nb_bets_val} {bets_label} | {best['avg_edge']:+.1f}% ± {std_val:.1f}% edge)"
+  )
+
 
 def prepare_dataframe(df_raw):
   """Prépare et nettoie le DataFrame brut de Google Sheets pour tous les modules."""
@@ -402,21 +328,18 @@ def prepare_dataframe(df_raw):
 
   df = df_raw.copy()
 
-  # Indexation des colonnes par position (A=0, D=3, F=5, H=7, K=10, M=12, O=14)
   col_date, col_league, col_paris = 0, 3, 5
   col_odds, col_edge, col_mises, col_gains_pertes = 7, 10, 12, 14
 
-  # Conversion des dates avec .iloc
   raw_dates = (
-        df.iloc[:, col_date]
-        .astype(str)
-        .str.strip()
-        .str.extract(r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})")[0]
-    )
+      df.iloc[:, col_date]
+      .astype(str)
+      .str.strip()
+      .str.extract(r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})")[0]
+  )
   df["parsed_date"] = pd.to_datetime(raw_dates, dayfirst=True, errors="coerce")
   df = df.dropna(subset=["parsed_date"]).sort_values("parsed_date").copy()
 
-  # Fonction de nettoyage numérique
   def clean_num(series):
     s = (
         series.astype(str)
@@ -437,12 +360,10 @@ def prepare_dataframe(df_raw):
   df["mises_num"] = clean_num(df.iloc[:, col_mises])
   df["gains_num"] = clean_num(df.iloc[:, col_gains_pertes])
 
-  # Normalisation de l'edge
   df["edge_pct"] = df["edge_num"].apply(
       lambda x: x if abs(x) > 1.0 else x * 100.0
   )
 
-  # Catégorisation simplifiée du marché
   df["type_marche"] = df["pari"].apply(
       lambda x: (
           "Tirs & Cadrés"
@@ -456,8 +377,8 @@ def prepare_dataframe(df_raw):
 
 def filter_by_period(df, period_choice):
   """Filtre le DataFrame selon la période choisie dans le sélecteur."""
-  if df.empty:
-    return df
+  if df is None or df.empty:
+    return pd.DataFrame()
 
   now = pd.Timestamp.now()
 
@@ -467,9 +388,6 @@ def filter_by_period(df, period_choice):
   elif period_choice == "30 Derniers Jours":
     cutoff = now - pd.Timedelta(days=30)
     return df[df["parsed_date"] >= cutoff].copy()
-  elif period_choice == "Mois en Cours (MTD)":
-    start_of_month = pd.Timestamp(now.year, now.month, 1)
-    return df[df["parsed_date"] >= start_of_month].copy()
   elif period_choice == "Année en Cours (YTD)":
     start_of_year = pd.Timestamp(now.year, 1, 1)
     return df[df["parsed_date"] >= start_of_year].copy()
@@ -477,20 +395,45 @@ def filter_by_period(df, period_choice):
     return df.copy()
 
 
-# ==========================================
-# 4. GENERATEUR DE PDF (BILAN)
-# ==========================================
+def get_financial_summary(df_sub):
+  """Helper pour calculer les métriques financières d'un sous-ensemble."""
+  if df_sub is None or df_sub.empty:
+    return {"mises": 0.0, "pnl": 0.0, "roi": 0.0, "vbs": 0}
+  mises = df_sub["mises_num"].sum()
+  pnl = df_sub["gains_num"].sum()
+  roi = (pnl / mises * 100.0) if mises > 0 else 0.0
+  return {"mises": mises, "pnl": pnl, "roi": roi, "vbs": len(df_sub)}
+
+
+def get_performance_summary(df_sub):
+  """Helper pour calculer les métriques de performance d'un sous-ensemble."""
+  if df_sub is None or df_sub.empty:
+    return {"vbs": 0, "avg_odds": 0.0, "avg_edge": 0.0, "std_edge": 0.0}
+  vbs = len(df_sub)
+  valid_odds = df_sub["odds_num"][df_sub["odds_num"] > 1.0]
+  avg_odds = valid_odds.mean() if not valid_odds.empty else 0.0
+  valid_edges = df_sub["edge_pct"][df_sub["edge_pct"] != 0]
+  avg_edge = valid_edges.mean() if not valid_edges.empty else 0.0
+  std_edge = valid_edges.std() if len(valid_edges) > 1 else 0.0
+  return {
+      "vbs": vbs,
+      "avg_odds": avg_odds,
+      "avg_edge": avg_edge,
+      "std_edge": std_edge,
+  }
 
 
 def generate_pdf_report(df_filtered, period_label):
-  """Génère un rapport PDF élégant en mémoire."""
   pdf = FPDF()
   pdf.add_page()
   pdf.set_font("Helvetica", "B", 16)
 
-  # Titre
   pdf.cell(
-      0, 10, f"Bilan de Performance Value Bets - {period_label}", ln=True, align="C"
+      0,
+      10,
+      f"Bilan de Performance Value Bets - {period_label}",
+      ln=True,
+      align="C",
   )
   pdf.set_font("Helvetica", "", 10)
   pdf.cell(
@@ -502,7 +445,6 @@ def generate_pdf_report(df_filtered, period_label):
   )
   pdf.ln(5)
 
-  # Métriques clés
   total_vbs = len(df_filtered)
   total_mises = df_filtered["mises_num"].sum() if total_vbs > 0 else 0.0
   total_pnl = df_filtered["gains_num"].sum() if total_vbs > 0 else 0.0
@@ -520,13 +462,11 @@ def generate_pdf_report(df_filtered, period_label):
   pdf.cell(100, 7, f"Edge Moyen Théorique : +{avg_edge:.2f} %", ln=True)
   pdf.ln(8)
 
-  # Tableau résumé par Ligue (Top 5)
   if total_vbs > 0:
     pdf.set_font("Helvetica", "B", 12)
     pdf.cell(0, 8, "Top Ligues par Volume :", ln=True)
     pdf.set_font("Helvetica", "B", 10)
 
-    # Entêtes tableau
     pdf.cell(70, 7, "Ligue", border=1)
     pdf.cell(30, 7, "Bets", border=1, align="C")
     pdf.cell(45, 7, "Mises (EUR)", border=1, align="R")
@@ -549,7 +489,6 @@ def generate_pdf_report(df_filtered, period_label):
       pdf.cell(45, 7, f"{row['gains_num']:+.2f}", border=1, align="R")
       pdf.ln()
 
-  # Output vers buffer mémoire
   pdf_buffer = io.BytesIO()
   pdf.output(pdf_buffer)
   pdf_buffer.seek(0)
@@ -557,8 +496,10 @@ def generate_pdf_report(df_filtered, period_label):
 
 
 # ==========================================
-# 5. LOGIQUE MATHÉMATIQUE (DIXON-COLES & NBINOM)
+# 4. MODÈLES MATHÉMATIQUES (DIXON-COLES & NBINOM)
 # ==========================================
+
+
 def time_weights(dates, halflife_days):
   days_ago = (dates.max() - dates).dt.days.values
   decay = np.log(2) / halflife_days
@@ -578,8 +519,6 @@ def dixon_coles_adjustment(home_goals, away_goals, lam_home, lam_away, rho):
 
 
 def proba_tirs_nbinom(mu, var, ligne_bookmaker):
-  """Calcule les probas statistiques avec la Loi Binomiale Négative / Poisson."""
-  # SÉCURITÉ : Si aucun cut/ligne n'est renseigné, on sort directement
   if ligne_bookmaker is None:
     return 0.0, 0.0
 
@@ -588,14 +527,12 @@ def proba_tirs_nbinom(mu, var, ligne_bookmaker):
   if var <= mu or math.isnan(var) or var == 0:
     p_under = poisson.cdf(seuil, mu)
   else:
-    # Ton code habituel pour le calcul nbinom...
     r = (mu**2) / (var - mu)
     p = mu / var
     p_under = nbinom.cdf(seuil, r, p)
 
   p_over = 1.0 - p_under
   return p_under, p_over
-
 
 
 class DixonColesModel:
@@ -650,10 +587,7 @@ class DixonColesModel:
     )
 
     if not result.success:
-      st.warning(
-          "Attention : Le modèle a eu du mal à converger pour ce"
-          " championnat. Les résultats peuvent être moins précis."
-      )
+      st.warning("Attention : Le modèle a eu du mal à converger.")
 
     attack, defense, rho, home_adv = unpack(result.x)
     self.params = {
@@ -727,9 +661,6 @@ class DixonColesModel:
     }
 
 
-# ==========================================
-# 6. GESTION DES DONNÉES DE MATCHS
-# ==========================================
 @dataclass
 class ValueBetResult:
   market: str
@@ -738,12 +669,6 @@ class ValueBetResult:
   bookmaker_odds: float
   edge: float
   kelly_quart: float
-
-
-def remove_overround(odds):
-  implied = {k: 1 / v for k, v in odds.items()}
-  overround = sum(implied.values())
-  return {k: v / overround for k, v in implied.items()}
 
 
 @st.cache_data(ttl=3600)
@@ -764,16 +689,13 @@ def load_and_clean_data(league_code):
         df = pd.read_csv(io.StringIO(content))
         df["Season"] = s
         dfs.append(df)
-      else:
-        st.sidebar.warning(f"Saison {s} : Erreur HTTP {response.status_code}")
-    except Exception as e:
-      st.sidebar.warning(f"Saison {s} : {e}")
+    except Exception:
+      pass
 
   if not dfs:
     return None
 
   data = pd.concat(dfs, ignore_index=True)
-
   cols_to_clean = [
       "HomeTeam",
       "AwayTeam",
@@ -786,7 +708,6 @@ def load_and_clean_data(league_code):
   ]
   existing_cols = [c for c in cols_to_clean if c in data.columns]
   data = data.dropna(subset=existing_cols)
-
   data["Date"] = pd.to_datetime(data["Date"], dayfirst=True, errors="coerce")
   data = data.dropna(subset=["Date"])
 
@@ -807,8 +728,7 @@ def load_fixtures():
         content = response.content.decode("utf-8")
       except UnicodeDecodeError:
         content = response.content.decode("latin-1")
-      df_fix = pd.read_csv(io.StringIO(content))
-      return df_fix
+      return pd.read_csv(io.StringIO(content))
   except Exception:
     pass
   return None
@@ -829,7 +749,75 @@ def train_all_models(df):
 
 
 # ==========================================
-# 7. SIDEBAR (FILTRES & METRIQUES)
+# 5. CHARGEMENT INITIAL DE LA DONNÉE
+# ==========================================
+df_raw = fetch_raw_data_from_sheets()
+df_all = prepare_dataframe(df_raw)
+
+
+# ==========================================
+# 6. EN-TÊTE PRINCIPAL & FILTRE TEMPOREL DYNAMIQUE
+# ==========================================
+st.title("🏆 Scanner de Value Bets Pro (Buts & Tirs)")
+
+st.subheader("🗓️ Filtre Temporel & Période Glissante")
+period_choice = st.selectbox(
+    "Choisir l'horizon d'analyse :",
+    [
+        "7 Derniers Jours",
+        "30 Derniers Jours",
+        "Année en Cours (YTD)",
+        "Tout l'Historique",
+    ],
+    index=1,  # Par défaut sur 30 jours
+)
+
+# Application immédiate du filtre temporel
+df_filtered = filter_by_period(df_all, period_choice)
+
+# CALCUL DES MÉTRIQUES DYNAMIQUES (PERFORMANCE & FINANCES)
+if not df_filtered.empty:
+  total_vbs = len(df_filtered)
+
+  # Masques de marchés
+  tirs_mask = df_filtered["type_marche"] == "Tirs & Cadrés"
+  df_buts = df_filtered[~tirs_mask]
+  df_tirs = df_filtered[tirs_mask]
+
+  tirs_count = tirs_mask.sum()
+  pct_tirs = tirs_count / total_vbs if total_vbs > 0 else 0.5
+  pct_buts = 1.0 - pct_tirs
+
+  # Summaries Performance Découpés (Global, Buts, Tirs)
+  perf_global = get_performance_summary(df_filtered)
+  perf_buts = get_performance_summary(df_buts)
+  perf_tirs = get_performance_summary(df_tirs)
+
+  # Bilans Financiers Découpés (Global, Buts, Tirs)
+  fin_global = get_financial_summary(df_filtered)
+  fin_buts = get_financial_summary(df_buts)
+  fin_tirs = get_financial_summary(df_tirs)
+
+  # Top Ligues raccordées au filtre temporel actif
+  top_league_global = compute_top_league(df_filtered)
+  top_league_buts = compute_top_league(df_buts)
+  top_league_tirs = compute_top_league(df_tirs)
+else:
+  total_vbs = 0
+  pct_buts, pct_tirs = 0.5, 0.5
+  perf_global = {"vbs": 0, "avg_odds": 0.0, "avg_edge": 0.0, "std_edge": 0.0}
+  perf_buts = {"vbs": 0, "avg_odds": 0.0, "avg_edge": 0.0, "std_edge": 0.0}
+  perf_tirs = {"vbs": 0, "avg_odds": 0.0, "avg_edge": 0.0, "std_edge": 0.0}
+  fin_global = {"mises": 0.0, "pnl": 0.0, "roi": 0.0, "vbs": 0}
+  fin_buts = {"mises": 0.0, "pnl": 0.0, "roi": 0.0, "vbs": 0}
+  fin_tirs = {"mises": 0.0, "pnl": 0.0, "roi": 0.0, "vbs": 0}
+  top_league_global = "Aucun pari"
+  top_league_buts = "Aucun pari"
+  top_league_tirs = "Aucun pari"
+
+
+# ==========================================
+# 7. BARRE LATÉRALE (SIDEBAR DYNAMIQUE)
 # ==========================================
 st.sidebar.header("🎯 Mode d'Analyse")
 match_mode = st.sidebar.radio(
@@ -847,128 +835,191 @@ cote_min, cote_max = st.sidebar.slider(
     min_value=1.10,
     max_value=5.00,
     value=(1.50, 2.30),
-    step=0.05
+    step=0.05,
 )
 
 st.sidebar.divider()
 
-# --- BOUTON DE RAFRAÎCHISSEMENT RAPIDE ---
 if st.sidebar.button("🔄 Purger le cache & Actualiser"):
   st.cache_data.clear()
   st.rerun()
 
-# --- CALCUL ET AFFICHAGE DYNAMIQUE DES METRIQUES ---
-st.sidebar.subheader("📊 Performance Hebdo (7j)")
+# 1. PERFORMANCE TRI-MARCHÉ (MÊME TAILLE DE POLICE QUE BILAN FINANCIER & TOP LIGUES)
+st.sidebar.markdown(
+    f"<span style='font-size: 1.2rem; font-weight: bold;'>📊 Performance"
+    f" ({period_choice})</span>",
+    unsafe_allow_html=True,
+)
 
-# Récupération des données depuis Google Sheets
-metrics = get_sidebar_metrics()
-
-if metrics:
-  total_vbs = metrics["total_vbs"]
-  delta_vbs = metrics["delta_vbs"]
-  avg_edge = metrics["avg_edge"]
-  avg_odds = metrics["avg_odds"]
-  expected_roi = metrics["expected_roi"]
-  top_league = metrics["top_league"]
-  pct_buts = metrics["pct_buts"]
-  pct_tirs = metrics["pct_tirs"]
-  total_mises = metrics["total_mises"]
-  total_gains = metrics["total_gains_pertes"]
-  roi_reel = metrics["roi_reel"]
-else:
-  # Valeurs de secours si la feuille est vide ou inaccessible
-  total_vbs, delta_vbs, avg_edge, avg_odds, expected_roi = 0, 0, 0.0, 0.0, 0.0
-  top_league = "Aucune donnée"
-  pct_buts, pct_tirs = 0.5, 0.5
-  total_mises, total_gains, roi_reel = 0.0, 0.0, 0.0
-
-# 1. KPIs de Volume & Cotes
-kpi_col1, kpi_col2 = st.sidebar.columns(2)
-with kpi_col1:
-  st.metric(
-      label="Value Bets",
-      value=f"{total_vbs}",
-      delta=f"{delta_vbs:+d} vs S-1" if metrics else None,
+# A. Global
+st.sidebar.markdown(
+    "<div style='margin-top: 8px;'><span style='font-size: 0.98rem; font-weight:"
+    " 600; color: #e0e0e0;'>🌐 Global</span></div>",
+    unsafe_allow_html=True,
+)
+pg1, pg2 = st.sidebar.columns(2)
+with pg1:
+  st.sidebar.metric(label="Value Bets", value=f"{perf_global['vbs']}")
+  st.sidebar.metric(
+      label="Edge Moyen",
+      value=(
+          f"+{perf_global['avg_edge']:.1f}% ±"
+          f" {perf_global['std_edge']:.1f}%"
+      ),
   )
-  st.metric(label="Cote Moyenne", value=f"{avg_odds:.2f}")
+with pg2:
+  st.sidebar.metric(
+      label="Cote Moyenne", value=f"{perf_global['avg_odds']:.2f}"
+  )
 
-with kpi_col2:
-  st.metric(label="Edge Moyen", value=f"+{avg_edge:.1f}%")
-  st.metric(label="ROI Théorique", value=f"+{expected_roi:.1f}%")
+# B. Marchés Buts
+st.sidebar.markdown(
+    "<div style='margin-top: 8px;'><span style='font-size: 0.98rem; font-weight:"
+    " 600; color: #e0e0e0;'>⚽ Marchés Buts</span></div>",
+    unsafe_allow_html=True,
+)
+pb1, pb2 = st.sidebar.columns(2)
+with pb1:
+  st.sidebar.metric(label="Value Bets (Buts)", value=f"{perf_buts['vbs']}")
+  st.sidebar.metric(
+      label="Edge (Buts)",
+      value=f"+{perf_buts['avg_edge']:.1f}% ± {perf_buts['std_edge']:.1f}%",
+  )
+with pb2:
+  st.sidebar.metric(
+      label="Cote Moy. (Buts)", value=f"{perf_buts['avg_odds']:.2f}"
+  )
 
-st.sidebar.metric(label="🏆 Top Ligue (Edge)", value=top_league)
+# C. Marchés Tirs
+st.sidebar.markdown(
+    "<div style='margin-top: 8px;'><span style='font-size: 0.98rem; font-weight:"
+    " 600; color: #e0e0e0;'>📊 Marchés Tirs</span></div>",
+    unsafe_allow_html=True,
+)
+pt1, pt2 = st.sidebar.columns(2)
+with pt1:
+  st.sidebar.metric(label="Value Bets (Tirs)", value=f"{perf_tirs['vbs']}")
+  st.sidebar.metric(
+      label="Edge (Tirs)",
+      value=f"+{perf_tirs['avg_edge']:.1f}% ± {perf_tirs['std_edge']:.1f}%",
+  )
+with pt2:
+  st.sidebar.metric(
+      label="Cote Moy. (Tirs)", value=f"{perf_tirs['avg_odds']:.2f}"
+  )
 
 # 2. Répartition des Marchés (Buts vs Tirs)
+st.sidebar.markdown("---")
 st.sidebar.markdown("**🎯 Répartition Marchés**")
 st.sidebar.caption(f"{pct_buts:.0%} Buts  |  {pct_tirs:.0%} Tirs")
 st.sidebar.progress(pct_buts)
 
-# 3. Bilan Financier Réel (Mises, P&L & ROI Réel)
+# 3. Bilan Financier Tripartite
 st.sidebar.markdown("---")
-st.sidebar.markdown("**💰 Bilan Financier**")
+st.sidebar.markdown(
+    "<span style='font-size: 1.2rem; font-weight: bold;'>💰 Bilan"
+    " Financier</span>",
+    unsafe_allow_html=True,
+)
 
-fin_col1, fin_col2 = st.sidebar.columns(2)
-with fin_col1:
-  st.metric(label="Mises Totales", value=f"{total_mises:,.2f} €".replace(",", " "))
-  st.metric(
-      label="ROI Réel",
-      value=f"{roi_reel:+.1f}%",
-      delta=(
-          f"{roi_reel - expected_roi:+.1f}% vs Théo"
-          if (metrics and total_vbs > 0)
-          else None
-      ),
+# A. Global
+st.sidebar.markdown(
+    "<div style='margin-top: 8px;'><span style='font-size: 0.98rem; font-weight:"
+    " 600; color: #e0e0e0;'>🌐 Global</span></div>",
+    unsafe_allow_html=True,
+)
+fg1, fg2 = st.sidebar.columns(2)
+with fg1:
+  st.sidebar.metric(
+      label="Mises Totales",
+      value=f"{fin_global['mises']:,.2f} €".replace(",", " "),
+  )
+  st.sidebar.metric(label="ROI Réel", value=f"{fin_global['roi']:+.1f}%")
+with fg2:
+  st.sidebar.metric(
+      label="P&L Net", value=f"{fin_global['pnl']:+,.2f} €".replace(",", " ")
   )
 
-with fin_col2:
-  st.metric(
-      label="P&L Net",
-      value=f"{total_gains:+,.2f} €".replace(",", " "),
-      delta=f"{roi_reel:+.1f}% ROI" if (metrics and total_vbs > 0) else None,
+# B. Marchés Buts
+st.sidebar.markdown(
+    "<div style='margin-top: 8px;'><span style='font-size: 0.98rem; font-weight:"
+    " 600; color: #e0e0e0;'>⚽ Marchés Buts</span></div>",
+    unsafe_allow_html=True,
+)
+fb1, fb2 = st.sidebar.columns(2)
+with fb1:
+  st.sidebar.metric(
+      label="Mises (Buts)",
+      value=f"{fin_buts['mises']:,.2f} €".replace(",", " "),
   )
+  st.sidebar.metric(label="ROI (Buts)", value=f"{fin_buts['roi']:+.1f}%")
+with fb2:
+  st.sidebar.metric(
+      label="P&L (Buts)", value=f"{fin_buts['pnl']:+,.2f} €".replace(",", " ")
+  )
+
+# C. Marchés Tirs
+st.sidebar.markdown(
+    "<div style='margin-top: 8px;'><span style='font-size: 0.98rem; font-weight:"
+    " 600; color: #e0e0e0;'>📊 Marchés Tirs</span></div>",
+    unsafe_allow_html=True,
+)
+ft1, ft2 = st.sidebar.columns(2)
+with ft1:
+  st.sidebar.metric(
+      label="Mises (Tirs)",
+      value=f"{fin_tirs['mises']:,.2f} €".replace(",", " "),
+  )
+  st.sidebar.metric(label="ROI (Tirs)", value=f"{fin_tirs['roi']:+.1f}%")
+with ft2:
+  st.sidebar.metric(
+      label="P&L (Tirs)", value=f"{fin_tirs['pnl']:+,.2f} €".replace(",", " ")
+  )
+
+# 4. TOP LIGUES
+st.sidebar.markdown("---")
+st.sidebar.markdown(
+    "<span style='font-size: 1.2rem; font-weight: bold;'>🏆 Top Ligues"
+    " (Période Active)</span>",
+    unsafe_allow_html=True,
+)
+
+st.sidebar.markdown(
+    f"""
+    <div style="font-size: 0.85rem; line-height: 1.45; background-color: #1e2129; padding: 9px 11px; border-radius: 6px; margin-top: 10px; margin-bottom: 8px; border-left: 3.5px solid #00CC96;">
+        <span style="font-weight: bold; color: #a0aab8; font-size: 0.75rem; text-transform: uppercase;">🌐 Global</span><br>
+        <span style="color: #ffffff; font-weight: 500; font-size: 0.83rem;">{top_league_global}</span>
+    </div>
+    <div style="font-size: 0.85rem; line-height: 1.45; background-color: #1e2129; padding: 9px 11px; border-radius: 6px; margin-bottom: 8px; border-left: 3.5px solid #00CC96;">
+        <span style="font-weight: bold; color: #a0aab8; font-size: 0.75rem; text-transform: uppercase;">⚽ Marchés Buts</span><br>
+        <span style="color: #ffffff; font-weight: 500; font-size: 0.83rem;">{top_league_buts}</span>
+    </div>
+    <div style="font-size: 0.85rem; line-height: 1.45; background-color: #1e2129; padding: 9px 11px; border-radius: 6px; margin-bottom: 8px; border-left: 3.5px solid #00CC96;">
+        <span style="font-weight: bold; color: #a0aab8; font-size: 0.75rem; text-transform: uppercase;">📊 Marchés Tirs</span><br>
+        <span style="color: #ffffff; font-weight: 500; font-size: 0.83rem;">{top_league_tirs}</span>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 st.sidebar.divider()
 
+
 # ==========================================
-# 3. INTERFACE PRINCIPALE & NOUVEAUX MODULES
+# 8. GRAPHIQUES & TABLEAU DE BORD PRINCIPAL
 # ==========================================
 
-# A. SÉLECTEUR DE PÉRIODE GLISSANTE
-st.subheader("🗓️ Filtre Temporel & Période Glissante")
-period_choice = st.selectbox(
-    "Choisir l'horizon d'analyse :",
-    [
-        "7 Derniers Jours",
-        "30 Derniers Jours",
-        "Mois en Cours (MTD)",
-        "Année en Cours (YTD)",
-        "Tout l'Historique",
-    ],
-    index=0,
-)
-
-# Chargement et préparation globale
-df_raw = fetch_raw_data_from_sheets()  # Ta fonction existante d'accès Sheet
-df_all = prepare_dataframe(df_raw)
-df_filtered = filter_by_period(df_all, period_choice)
-
-# B. GRAPHIQUE P&L RÉEL VS P&L THÉORIQUE (VARIANCE)
+# A. COURBE DE VARIANCE (P&L RÉEL VS P&L THÉORIQUE)
 st.markdown("---")
 st.subheader("📈 P&L Réel vs P&L Théorique (Courbe de Variance)")
 
 if not df_filtered.empty:
-  # 1. Copie pour ne pas altérer le DataFrame principal
   df_chart = df_filtered.copy()
-
-  # 2. On extrait uniquement la date (jour) sans les heures/microsecondes
   df_chart["date_jour"] = df_chart["parsed_date"].dt.date
-
-  # 3. Calcul de l'EV en Euros (€) par pari : Mise * (Edge % / 100)
   df_chart["pnl_theo_step"] = df_chart["mises_num"] * (
       df_chart["edge_pct"] / 100.0
   )
 
-  # 4. Regroupement par jour pour cumuler proprement par date
   df_pnl = (
       df_chart.groupby("date_jour")
       .agg({"gains_num": "sum", "pnl_theo_step": "sum", "mises_num": "sum"})
@@ -976,14 +1027,11 @@ if not df_filtered.empty:
       .sort_values("date_jour")
   )
 
-  # 5. Calcul des courbes cumulées quotidiennes
   df_pnl["pnl_real_cum"] = df_pnl["gains_num"].cumsum()
   df_pnl["pnl_theo_cum"] = df_pnl["pnl_theo_step"].cumsum()
 
-  # 6. Construction du graphique Plotly
   fig_pnl = go.Figure()
 
-  # Courbe Réelle (exclut les jours où aucun pari n'a encore été clôturé)
   fig_pnl.add_trace(
       go.Scatter(
           x=df_pnl["date_jour"],
@@ -995,7 +1043,6 @@ if not df_filtered.empty:
       )
   )
 
-  # Courbe Théorique
   fig_pnl.add_trace(
       go.Scatter(
           x=df_pnl["date_jour"],
@@ -1022,7 +1069,7 @@ if not df_filtered.empty:
 else:
   st.info("Aucun pari trouvé sur la période sélectionnée.")
 
-# C. MATRICE DE RENTABILITÉ / HEATMAP (LIGUE X MARCHÉ)
+# B. HEATMAP DE RENTABILITÉ
 st.markdown("---")
 st.subheader("🔥 Matrice de Rentabilité (Ligue × Type de Marché)")
 
@@ -1050,7 +1097,7 @@ if not df_filtered.empty:
 else:
   st.info("Pas assez de données pour afficher la heatmap.")
 
-# D. EXPORT PDF DU BILAN
+# C. EXPORT PDF DU BILAN
 st.markdown("---")
 st.subheader("📄 Exportation du Bilan")
 
@@ -1067,9 +1114,10 @@ else:
 
 
 # ==========================================
-# 8. PAGE PRINCIPALE & SELECTIONS
+# 9. MODULE VALUE BET SCANNER (SELECTION & MATCH)
 # ==========================================
-st.title("🏆 Scanner de Value Bets Pro (Buts & Tirs)")
+st.markdown("---")
+st.header("⚽ Analyse de Match & Scanner")
 
 league_key = st.selectbox(
     "1️⃣ Choisis un championnat",
@@ -1089,15 +1137,10 @@ with st.spinner("Calcul et calibration des modèles..."):
     st.error("Impossible de charger les données.")
     st.stop()
 
-# --- SÉLECTION PAR DATE, MATCH ET TIMING (CORRECTION 4 : Alignement [1, 2, 1]) ---
 df_fixtures = load_fixtures()
 idx_h, idx_a = 0, min(1, len(teams_list) - 1)
-
-# Valeurs par défaut de sécurité
 selected_date = datetime.now().strftime("%d/%m/%Y")
 timing_paris = "1. J-2+"
-
-# 1. Date par défaut (aujourd'hui)
 match_date = datetime.today().date()
 
 if df_fixtures is not None and not df_fixtures.empty:
@@ -1116,12 +1159,11 @@ if df_fixtures is not None and not df_fixtures.empty:
           "📅 1. Date", options=["-- Toutes les dates --"] + available_dates
       )
 
-    if selected_date_opt != "-- Toutes les dates --":
-      filtered_fixtures = league_fixtures[
-          league_fixtures["Date"] == selected_date_opt
-      ]
-    else:
-      filtered_fixtures = league_fixtures
+    filtered_fixtures = (
+        league_fixtures[league_fixtures["Date"] == selected_date_opt]
+        if selected_date_opt != "-- Toutes les dates --"
+        else league_fixtures
+    )
 
     fixture_options = filtered_fixtures.apply(
         lambda r: f"{r['HomeTeam']} / {r['AwayTeam']}", axis=1
@@ -1147,7 +1189,6 @@ if df_fixtures is not None and not df_fixtures.empty:
       if a_sel in teams_list:
         idx_a = teams_list.index(a_sel)
 
-      # Récupération automatique de la date du match sélectionné
       match_row = filtered_fixtures[
           (filtered_fixtures["HomeTeam"] == h_sel)
           & (filtered_fixtures["AwayTeam"] == a_sel)
@@ -1157,8 +1198,7 @@ if df_fixtures is not None and not df_fixtures.empty:
 
 st.divider()
 
-# Saisie / Ajustement manuel
-col1, col2, col3, col4 = st.columns([2, 2, 1,1.2])
+col1, col2, col3, col4 = st.columns([2, 2, 1, 1.2])
 
 with col1:
   home_team = st.selectbox(
@@ -1172,32 +1212,25 @@ with col2:
 
 with col3:
   if isinstance(match_date, str):
-    # Si la date vient du fichier fixtures (déjà du texte)
     final_match_date = match_date
     st.text_input("📅 Date match", value=final_match_date, disabled=True)
   else:
-    # Si la date est choisie manuellement via le calendrier
     user_date = st.date_input("📅 Date match", value=match_date)
-    # On la formate proprement en chaîne de caractères (ex: 25/10/2026)
     final_match_date = user_date.strftime("%d/%m/%Y")
 
-  # 🟢 AJOUT CRUCIAL : On met à jour la variable transmise à l'exportation
   selected_date = final_match_date
-    
+
 with col4:
   timing_paris = st.selectbox(
       "⏱️ Timing pari",
       options=["1. J-2+", "2. J-1", "3. H-12 à H-2", "4. H-2 à H"],
+      key="timing_manual",
   )
-      
-# --- LIVE ---
+
 live_minute, live_home_score, live_away_score = 0, 0, 0
 if match_mode == "En direct (Live)":
   st.divider()
-  st.info(
-      "⏱️ **Mode Live Activé** : Indiquez l'état actuel de la rencontre pour"
-      " réajuster le modèle en temps réel."
-  )
+  st.info("⏱️ **Mode Live Activé** : Indiquez l'état actuel de la rencontre.")
   l_col1, l_col2, l_col3 = st.columns(3)
   with l_col1:
     live_minute = st.number_input(
@@ -1214,8 +1247,9 @@ if match_mode == "En direct (Live)":
 
 st.divider()
 
+
 # ==========================================
-# 9. SAISIE DES COTES
+# 10. SAISIE DES COTES BOOKMAKER
 # ==========================================
 st.subheader("2️⃣ Saisissez les cotes du bookmaker")
 
@@ -1322,12 +1356,10 @@ min_edge = (
     / 100
 )
 
-# ==========================================
-# 10. MOTEUR D'ANALYSE & AFFICHAGE
-# ==========================================
 
-# BOUTON DE LANCEMENT DE L'ANALYSE 
-
+# ==========================================
+# 11. MOTEUR D'ANALYSE & EXPORT
+# ==========================================
 if st.button(
     "🚀 Lancer l'Analyse Complète", type="primary", use_container_width=True
 ):
@@ -1335,16 +1367,12 @@ if st.button(
     st.error("Veuillez choisir deux équipes différentes.")
     st.session_state.pop("analysis_data", None)
   elif not (cat_buts_main or cat_buts_team or cat_shots):
-    st.warning(
-        "Veuillez cocher au moins une catégorie à analyser dans le menu de"
-        " gauche."
-    )
+    st.warning("Veuillez cocher au moins une catégorie à analyser.")
     st.session_state.pop("analysis_data", None)
   else:
     preds_all = {}
     market_odds = {}
 
-    # 1. Calculs Buts
     if cat_buts_main or cat_buts_team:
       base_goals_preds = models["goals"].predict_goal_markets(
           home_team, away_team
@@ -1455,7 +1483,6 @@ if st.button(
             },
         })
 
-    # 2. Calculs Tirs & SOT
     if cat_shots:
       lam_h_shots, lam_a_shots = models["shots"].get_lambdas(
           home_team, away_team
@@ -1494,7 +1521,6 @@ if st.button(
         var_h_sot *= ratio
         var_a_sot *= ratio
 
-      # Configuration centralisée des marchés Tirs et SOT
       shots_config = [
           (
               "tirs_match",
@@ -1546,7 +1572,6 @@ if st.button(
           ),
       ]
 
-      # Seuls les marchés dont la ligne/cut est saisie sont calculés
       for prefix, line, lam, var, odd_o, odd_u in shots_config:
         if line is not None:
           prob_u, prob_o = proba_tirs_nbinom(lam, var, line)
@@ -1554,24 +1579,19 @@ if st.button(
           preds_all[market_key] = {"over": prob_o, "under": prob_u}
           market_odds[market_key] = {"over": odd_o, "under": odd_u}
 
-
-    # 3. Moteur de Value Bets
     results = []
     for market, odds in market_odds.items():
       for sel, odd in odds.items():
-        # 1. Si la cote n'a pas été saisie (None), on passe au suivant
         if odd is None:
           continue
-    
-        # 2. Sécurité sur les bornes (au cas où cote_min ou cote_max dans le sidebar valaient None)
+
         c_min = cote_min if cote_min is not None else 1.50
         c_max = cote_max if cote_max is not None else 2.30
-    
-        # 3. Vérification de la tranche [1.50 - 2.30]
+
         if c_min <= odd <= c_max:
           prob = preds_all[market][sel]
           edge = prob * odd - 1
-    
+
           if edge > min_edge:
             b = odd - 1
             kelly_quart = (
@@ -1583,7 +1603,6 @@ if st.button(
 
     results.sort(key=lambda x: x.edge, reverse=True)
 
-    # Sauvegarde du contexte et des résultats dans la mémoire de session
     st.session_state["analysis_data"] = {
         "results": results,
         "home_team": home_team,
@@ -1604,9 +1623,10 @@ if st.button(
         "min_edge": min_edge,
     }
 
-# -----------------------------------------------------------------------------
-# 11. AFFICHAGE DU RAPPORT & BOUTONS D'EXPORT (SÉPARÉS DU BOUTON PRINCIPAL)
-# -----------------------------------------------------------------------------
+
+# ==========================================
+# 12. AFFICHAGE DES RÉSULTATS & EXPORT
+# ==========================================
 if "analysis_data" in st.session_state:
   data = st.session_state["analysis_data"]
   results = data["results"]
@@ -1618,13 +1638,12 @@ if "analysis_data" in st.session_state:
   league_country = data["league_country"]
   min_edge = data["min_edge"]
 
-# ✂️ NETTOYAGE DE LA LIGUE : Ne garde que ce qui est après " - "
   clean_league = (
       league_country.split(" - ")[-1]
       if " - " in str(league_country)
       else league_country
   )
-    
+
   st.header(f"📊 Rapport : {home_team} vs {away_team}")
   if match_mode == "En direct (Live)":
     st.caption(
@@ -1639,9 +1658,6 @@ if "analysis_data" in st.session_state:
         " (Edge ou Cotes hors limites)."
     )
   else:
-    # -------------------------------------------------------------
-    # 1. EXPORT GLOBAL
-    # -------------------------------------------------------------
     if st.button(
         f"📤 Exporter les {len(results)} Value Bets vers Google Sheets",
         type="primary",
@@ -1652,7 +1668,7 @@ if "analysis_data" in st.session_state:
           match_date=selected_date,
           match_mode=match_mode,
           timing_paris=timing_paris,
-          league_name=clean_league,  # <-- On utilise clean_league ici
+          league_name=clean_league,
           home_team=home_team,
           away_team=away_team,
       )
@@ -1664,7 +1680,6 @@ if "analysis_data" in st.session_state:
 
     st.divider()
 
-    # Plotly Scatter
     df_res = pd.DataFrame([{
         "Marché": vb.market.upper(),
         "Sélection": vb.selection.upper(),
@@ -1692,9 +1707,6 @@ if "analysis_data" in st.session_state:
     st.plotly_chart(fig, use_container_width=True)
     st.divider()
 
-    # -------------------------------------------------------------
-    # 2. EXPORTS INDIVIDUELS
-    # -------------------------------------------------------------
     for idx, vb in enumerate(results):
       display_market = vb.market.upper()
       display_selection = vb.selection.upper()
@@ -1736,7 +1748,7 @@ if "analysis_data" in st.session_state:
             match_date=selected_date,
             match_mode=match_mode,
             timing_paris=timing_paris,
-            league_name=clean_league,  # <-- On utilise clean_league ici aussi !
+            league_name=clean_league,
             home_team=home_team,
             away_team=away_team,
         )
