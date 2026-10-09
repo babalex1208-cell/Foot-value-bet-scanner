@@ -407,7 +407,12 @@ def prepare_dataframe(df_raw):
   col_odds, col_edge, col_mises, col_gains_pertes = 7, 10, 12, 14
 
   # Conversion des dates avec .iloc
-  raw_dates = df.iloc[:, col_date].astype(str).str.strip().str.split(" ").str[0]
+  raw_dates = (
+        df.iloc[:, col_date]
+        .astype(str)
+        .str.strip()
+        .str.extract(r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})")[0]
+    )
   df["parsed_date"] = pd.to_datetime(raw_dates, dayfirst=True, errors="coerce")
   df = df.dropna(subset=["parsed_date"]).sort_values("parsed_date").copy()
 
@@ -952,22 +957,37 @@ st.markdown("---")
 st.subheader("📈 P&L Réel vs P&L Théorique (Courbe de Variance)")
 
 if not df_filtered.empty:
-  # Calcul du cumulatif
-  df_filtered["cum_mises"] = df_filtered["mises_num"].cumsum()
-  df_filtered["pnl_real_cum"] = df_filtered["gains_num"].cumsum()
-  # Gain théorique attendu = Mise * (Edge / 100)
-  df_filtered["pnl_theo_step"] = df_filtered["mises_num"] * (
-      df_filtered["edge_pct"] / 100.0
-  )
-  df_filtered["pnl_theo_cum"] = df_filtered["pnl_theo_step"].cumsum()
+  # 1. Copie pour ne pas altérer le DataFrame principal
+  df_chart = df_filtered.copy()
 
+  # 2. On extrait uniquement la date (jour) sans les heures/microsecondes
+  df_chart["date_jour"] = df_chart["parsed_date"].dt.date
+
+  # 3. Calcul de l'EV en Euros (€) par pari : Mise * (Edge % / 100)
+  df_chart["pnl_theo_step"] = df_chart["mises_num"] * (
+      df_chart["edge_pct"] / 100.0
+  )
+
+  # 4. Regroupement par jour pour cumuler proprement par date
+  df_pnl = (
+      df_chart.groupby("date_jour")
+      .agg({"gains_num": "sum", "pnl_theo_step": "sum", "mises_num": "sum"})
+      .reset_index()
+      .sort_values("date_jour")
+  )
+
+  # 5. Calcul des courbes cumulées quotidiennes
+  df_pnl["pnl_real_cum"] = df_pnl["gains_num"].cumsum()
+  df_pnl["pnl_theo_cum"] = df_pnl["pnl_theo_step"].cumsum()
+
+  # 6. Construction du graphique Plotly
   fig_pnl = go.Figure()
 
-  # Courbe Réelle
+  # Courbe Réelle (exclut les jours où aucun pari n'a encore été clôturé)
   fig_pnl.add_trace(
       go.Scatter(
-          x=df_filtered["parsed_date"],
-          y=df_filtered["pnl_real_cum"],
+          x=df_pnl["date_jour"],
+          y=df_pnl["pnl_real_cum"],
           mode="lines+markers",
           name="P&L Réel (€)",
           line=dict(color="#00CC96", width=2.5),
@@ -977,8 +997,8 @@ if not df_filtered.empty:
   # Courbe Théorique
   fig_pnl.add_trace(
       go.Scatter(
-          x=df_filtered["parsed_date"],
-          y=df_filtered["pnl_theo_cum"],
+          x=df_pnl["date_jour"],
+          y=df_pnl["pnl_theo_cum"],
           mode="lines",
           name="P&L Théorique Attendu (€)",
           line=dict(color="#AB63FA", width=2, dash="dash"),
@@ -989,7 +1009,10 @@ if not df_filtered.empty:
       template="plotly_dark",
       xaxis_title="Date",
       yaxis_title="Euros (€)",
-      legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+      hovermode="x unified",
+      legend=dict(
+          orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
+      ),
       margin=dict(l=20, r=20, t=30, b=20),
   )
 
