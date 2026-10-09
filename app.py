@@ -405,6 +405,24 @@ def get_financial_summary(df_sub):
   return {"mises": mises, "pnl": pnl, "roi": roi, "vbs": len(df_sub)}
 
 
+def get_performance_summary(df_sub):
+  """Helper pour calculer les métriques de performance d'un sous-ensemble."""
+  if df_sub is None or df_sub.empty:
+    return {"vbs": 0, "avg_odds": 0.0, "avg_edge": 0.0, "std_edge": 0.0}
+  vbs = len(df_sub)
+  valid_odds = df_sub["odds_num"][df_sub["odds_num"] > 1.0]
+  avg_odds = valid_odds.mean() if not valid_odds.empty else 0.0
+  valid_edges = df_sub["edge_pct"][df_sub["edge_pct"] != 0]
+  avg_edge = valid_edges.mean() if not valid_edges.empty else 0.0
+  std_edge = valid_edges.std() if len(valid_edges) > 1 else 0.0
+  return {
+      "vbs": vbs,
+      "avg_odds": avg_odds,
+      "avg_edge": avg_edge,
+      "std_edge": std_edge,
+  }
+
+
 def generate_pdf_report(df_filtered, period_label):
   pdf = FPDF()
   pdf.add_page()
@@ -757,20 +775,9 @@ period_choice = st.selectbox(
 # Application immédiate du filtre temporel
 df_filtered = filter_by_period(df_all, period_choice)
 
-# CALCUL DES MÉTRIQUES DYNAMIQUES & FINANCIAL BREAKDOWN
+# CALCUL DES MÉTRIQUES DYNAMIQUES (PERFORMANCE & FINANCES)
 if not df_filtered.empty:
   total_vbs = len(df_filtered)
-  avg_odds = (
-      df_filtered["odds_num"][df_filtered["odds_num"] > 1.0].mean()
-      if not df_filtered[df_filtered["odds_num"] > 1.0].empty
-      else 0.0
-  )
-
-  # Edge Moyen + Écart-type Global
-  valid_edges = df_filtered["edge_pct"][df_filtered["edge_pct"] != 0]
-  avg_edge = valid_edges.mean() if not valid_edges.empty else 0.0
-  std_edge = valid_edges.std() if len(valid_edges) > 1 else 0.0
-  expected_roi = avg_edge
 
   # Masques de marchés
   tirs_mask = df_filtered["type_marche"] == "Tirs & Cadrés"
@@ -780,6 +787,11 @@ if not df_filtered.empty:
   tirs_count = tirs_mask.sum()
   pct_tirs = tirs_count / total_vbs if total_vbs > 0 else 0.5
   pct_buts = 1.0 - pct_tirs
+
+  # Summaries Performance Découpés (Global, Buts, Tirs)
+  perf_global = get_performance_summary(df_filtered)
+  perf_buts = get_performance_summary(df_buts)
+  perf_tirs = get_performance_summary(df_tirs)
 
   # Bilans Financiers Découpés (Global, Buts, Tirs)
   fin_global = get_financial_summary(df_filtered)
@@ -792,11 +804,10 @@ if not df_filtered.empty:
   top_league_tirs = compute_top_league(df_tirs)
 else:
   total_vbs = 0
-  avg_odds = 0.0
-  avg_edge = 0.0
-  std_edge = 0.0
-  expected_roi = 0.0
   pct_buts, pct_tirs = 0.5, 0.5
+  perf_global = {"vbs": 0, "avg_odds": 0.0, "avg_edge": 0.0, "std_edge": 0.0}
+  perf_buts = {"vbs": 0, "avg_odds": 0.0, "avg_edge": 0.0, "std_edge": 0.0}
+  perf_tirs = {"vbs": 0, "avg_odds": 0.0, "avg_edge": 0.0, "std_edge": 0.0}
   fin_global = {"mises": 0.0, "pnl": 0.0, "roi": 0.0, "vbs": 0}
   fin_buts = {"mises": 0.0, "pnl": 0.0, "roi": 0.0, "vbs": 0}
   fin_tirs = {"mises": 0.0, "pnl": 0.0, "roi": 0.0, "vbs": 0}
@@ -833,26 +844,77 @@ if st.sidebar.button("🔄 Purger le cache & Actualiser"):
   st.cache_data.clear()
   st.rerun()
 
-st.sidebar.subheader(f"📊 Performance ({period_choice})")
+# 1. PERFORMANCE TRI-MARCHÉ (MÊME TAILLE DE POLICE QUE BILAN FINANCIER & TOP LIGUES)
+st.sidebar.markdown(
+    f"<span style='font-size: 1.2rem; font-weight: bold;'>📊 Performance"
+    f" ({period_choice})</span>",
+    unsafe_allow_html=True,
+)
 
-# 1. KPIs de Volume & Cotes (+ Écart-type d'Edge)
-kpi_col1, kpi_col2 = st.sidebar.columns(2)
-with kpi_col1:
-  st.sidebar.metric(label="Value Bets", value=f"{total_vbs}")
-  st.sidebar.metric(label="Cote Moyenne", value=f"{avg_odds:.2f}")
-
-with kpi_col2:
+# A. Global
+st.sidebar.markdown(
+    "<div style='margin-top: 8px;'><span style='font-size: 0.98rem; font-weight:"
+    " 600; color: #e0e0e0;'>🌐 Global</span></div>",
+    unsafe_allow_html=True,
+)
+pg1, pg2 = st.sidebar.columns(2)
+with pg1:
+  st.sidebar.metric(label="Value Bets", value=f"{perf_global['vbs']}")
   st.sidebar.metric(
-      label="Edge Moyen", value=f"+{avg_edge:.1f}% ± {std_edge:.1f}%"
+      label="Edge Moyen",
+      value=(
+          f"+{perf_global['avg_edge']:.1f}% ±"
+          f" {perf_global['std_edge']:.1f}%"
+      ),
   )
-  st.sidebar.metric(label="ROI Théorique", value=f"+{expected_roi:.1f}%")
+with pg2:
+  st.sidebar.metric(
+      label="Cote Moyenne", value=f"{perf_global['avg_odds']:.2f}"
+  )
+
+# B. Marchés Buts
+st.sidebar.markdown(
+    "<div style='margin-top: 8px;'><span style='font-size: 0.98rem; font-weight:"
+    " 600; color: #e0e0e0;'>⚽ Marchés Buts</span></div>",
+    unsafe_allow_html=True,
+)
+pb1, pb2 = st.sidebar.columns(2)
+with pb1:
+  st.sidebar.metric(label="Value Bets (Buts)", value=f"{perf_buts['vbs']}")
+  st.sidebar.metric(
+      label="Edge (Buts)",
+      value=f"+{perf_buts['avg_edge']:.1f}% ± {perf_buts['std_edge']:.1f}%",
+  )
+with pb2:
+  st.sidebar.metric(
+      label="Cote Moy. (Buts)", value=f"{perf_buts['avg_odds']:.2f}"
+  )
+
+# C. Marchés Tirs
+st.sidebar.markdown(
+    "<div style='margin-top: 8px;'><span style='font-size: 0.98rem; font-weight:"
+    " 600; color: #e0e0e0;'>📊 Marchés Tirs</span></div>",
+    unsafe_allow_html=True,
+)
+pt1, pt2 = st.sidebar.columns(2)
+with pt1:
+  st.sidebar.metric(label="Value Bets (Tirs)", value=f"{perf_tirs['vbs']}")
+  st.sidebar.metric(
+      label="Edge (Tirs)",
+      value=f"+{perf_tirs['avg_edge']:.1f}% ± {perf_tirs['std_edge']:.1f}%",
+  )
+with pt2:
+  st.sidebar.metric(
+      label="Cote Moy. (Tirs)", value=f"{perf_tirs['avg_odds']:.2f}"
+  )
 
 # 2. Répartition des Marchés (Buts vs Tirs)
+st.sidebar.markdown("---")
 st.sidebar.markdown("**🎯 Répartition Marchés**")
 st.sidebar.caption(f"{pct_buts:.0%} Buts  |  {pct_tirs:.0%} Tirs")
 st.sidebar.progress(pct_buts)
 
-# 3. Bilan Financier Tripartite (Style & Polices mis à jour)
+# 3. Bilan Financier Tripartite
 st.sidebar.markdown("---")
 st.sidebar.markdown(
     "<span style='font-size: 1.2rem; font-weight: bold;'>💰 Bilan"
@@ -914,7 +976,7 @@ with ft2:
       label="P&L (Tirs)", value=f"{fin_tirs['pnl']:+,.2f} €".replace(",", " ")
   )
 
-# --- TOP LIGUES : TITRE TAILLE D'ÉGALITÉ (1.2rem) & POLICE LIGUES LÉGÈREMENT GROSSIE ---
+# 4. TOP LIGUES
 st.sidebar.markdown("---")
 st.sidebar.markdown(
     "<span style='font-size: 1.2rem; font-weight: bold;'>🏆 Top Ligues"
