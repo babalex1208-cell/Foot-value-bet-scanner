@@ -559,21 +559,36 @@ def filter_by_period(df, period_choice):
     start_of_year = pd.Timestamp(now.year, 1, 1)
     return df[df["parsed_date"] >= start_of_year].copy()
   else:  # "Tout l'Historique"
-    return df.copy()
+    return 
 
 
 # CALCUL DYNAMIQUE DES TOP LIGUES SUR LE FILTRE ACTIF
 
-if "type_marche" in df_filtered.columns:
-  tirs_mask = df_filtered["type_marche"] == "Tirs & Cadrés"
-else:
-  tirs_mask = df_filtered["pari"].str.contains(
+if "df_filtered" in locals() and df_filtered is not None and not df_filtered.empty:
+  # Détection sécurisée de la colonne de marché
+  if "type_marche" in df_filtered.columns:
+    col_marche = "type_marche"
+  elif "pari" in df_filtered.columns:
+    col_marche = "pari"
+  else:
+    col_marche = df_filtered.columns[
+        4
+    ]  # Fallback sur la colonne E si non nommée
+
+  # Masque pour séparer Buts et Tirs
+  tirs_mask = df_filtered[col_marche].astype(str).str.contains(
       "Cut|shots|sot|Tirs", case=False, na=False
   )
 
-top_league_global = compute_top_league(df_filtered)
-top_league_buts = compute_top_league(df_filtered[~tirs_mask])
-top_league_tirs = compute_top_league(df_filtered[tirs_mask])
+  # Calcul des 3 métriques
+  top_league_global = compute_top_league(df_filtered)
+  top_league_buts = compute_top_league(df_filtered[~tirs_mask])
+  top_league_tirs = compute_top_league(df_filtered[tirs_mask])
+else:
+  top_league_global = "Aucun pari"
+  top_league_buts = "Aucun pari"
+  top_league_tirs = "Aucun pari"
+
 
 # ==========================================
 # 4. GENERATEUR DE PDF (BILAN)
