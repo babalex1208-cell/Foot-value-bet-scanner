@@ -1009,63 +1009,80 @@ st.sidebar.divider()
 # 8. GRAPHIQUES & TABLEAU DE BORD PRINCIPAL
 # ==========================================
 
-# A. COURBE DE VARIANCE (P&L RÉEL VS P&L THÉORIQUE)
+# A. COURBE DE VARIANCE (P&L RÉEL VS P&L THÉORIQUE) AVEC SÉLECTEUR DE MARCHÉ
 st.markdown("---")
 st.subheader("📈 P&L Réel vs P&L Théorique (Courbe de Variance)")
 
+market_choice_chart = st.radio(
+    "Filtrer la courbe de variance par marché :",
+    ["🌐 Global", "⚽ Marchés Buts", "📊 Marchés Tirs"],
+    horizontal=True,
+    key="market_choice_chart",
+)
+
 if not df_filtered.empty:
-  df_chart = df_filtered.copy()
-  df_chart["date_jour"] = df_chart["parsed_date"].dt.date
-  df_chart["pnl_theo_step"] = df_chart["mises_num"] * (
-      df_chart["edge_pct"] / 100.0
-  )
+  if market_choice_chart == "🌐 Global":
+    df_chart_source = df_filtered.copy()
+  elif market_choice_chart == "⚽ Marchés Buts":
+    df_chart_source = df_buts.copy()
+  else:
+    df_chart_source = df_tirs.copy()
 
-  df_pnl = (
-      df_chart.groupby("date_jour")
-      .agg({"gains_num": "sum", "pnl_theo_step": "sum", "mises_num": "sum"})
-      .reset_index()
-      .sort_values("date_jour")
-  )
+  if not df_chart_source.empty:
+    df_chart = df_chart_source.copy()
+    df_chart["date_jour"] = df_chart["parsed_date"].dt.date
+    df_chart["pnl_theo_step"] = df_chart["mises_num"] * (
+        df_chart["edge_pct"] / 100.0
+    )
 
-  df_pnl["pnl_real_cum"] = df_pnl["gains_num"].cumsum()
-  df_pnl["pnl_theo_cum"] = df_pnl["pnl_theo_step"].cumsum()
+    df_pnl = (
+        df_chart.groupby("date_jour")
+        .agg({"gains_num": "sum", "pnl_theo_step": "sum", "mises_num": "sum"})
+        .reset_index()
+        .sort_values("date_jour")
+    )
 
-  fig_pnl = go.Figure()
+    df_pnl["pnl_real_cum"] = df_pnl["gains_num"].cumsum()
+    df_pnl["pnl_theo_cum"] = df_pnl["pnl_theo_step"].cumsum()
 
-  fig_pnl.add_trace(
-      go.Scatter(
-          x=df_pnl["date_jour"],
-          y=df_pnl["pnl_real_cum"],
-          mode="lines+markers",
-          name="P&L Réel (€)",
-          line=dict(color="#00CC96", width=2.5),
-          marker=dict(size=6),
-      )
-  )
+    fig_pnl = go.Figure()
 
-  fig_pnl.add_trace(
-      go.Scatter(
-          x=df_pnl["date_jour"],
-          y=df_pnl["pnl_theo_cum"],
-          mode="lines+markers",
-          name="P&L Théorique Attendu (€)",
-          line=dict(color="#AB63FA", width=2, dash="dash"),
-          marker=dict(size=6),
-      )
-  )
+    fig_pnl.add_trace(
+        go.Scatter(
+            x=df_pnl["date_jour"],
+            y=df_pnl["pnl_real_cum"],
+            mode="lines+markers",
+            name="P&L Réel (€)",
+            line=dict(color="#00CC96", width=2.5),
+            marker=dict(size=6),
+        )
+    )
 
-  fig_pnl.update_layout(
-      template="plotly_dark",
-      xaxis_title="Date",
-      yaxis_title="Euros (€)",
-      hovermode="x unified",
-      legend=dict(
-          orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
-      ),
-      margin=dict(l=20, r=20, t=30, b=20),
-  )
+    fig_pnl.add_trace(
+        go.Scatter(
+            x=df_pnl["date_jour"],
+            y=df_pnl["pnl_theo_cum"],
+            mode="lines+markers",
+            name="P&L Théorique Attendu (€)",
+            line=dict(color="#AB63FA", width=2, dash="dash"),
+            marker=dict(size=6),
+        )
+    )
 
-  st.plotly_chart(fig_pnl, use_container_width=True)
+    fig_pnl.update_layout(
+        template="plotly_dark",
+        xaxis_title="Date",
+        yaxis_title="Euros (€)",
+        hovermode="x unified",
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
+        ),
+        margin=dict(l=20, r=20, t=30, b=20),
+    )
+
+    st.plotly_chart(fig_pnl, use_container_width=True)
+  else:
+    st.info(f"Aucun pari trouvé pour le marché '{market_choice_chart}'.")
 else:
   st.info("Aucun pari trouvé sur la période sélectionnée.")
 
