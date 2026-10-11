@@ -241,7 +241,6 @@ def compute_top_league(df_subset):
   """Calcule dynamiquement la meilleure ligue sur le DataFrame filtré.
 
   Index 4-facteurs : PnL (40%), ROI (25%), Volume Log (20%), Edge (15%).
-  Format de retour : Ligue (PnL | ROI | Volume | Edge Moyen ± Écart-type)
   """
   if df_subset is None or df_subset.empty:
     return "Aucun pari"
@@ -456,42 +455,6 @@ def prepare_dataframe(df_raw):
   )
 
   return df
-
-
-def filter_by_period_and_timing(df, period_choice, timing_choice):
-  """Filtre le DataFrame selon la période ET le timing de pari choisi.
-
-  Exclut systématiquement les paris dont la date est dans le futur.
-  """
-  if df is None or df.empty:
-    return pd.DataFrame()
-
-  df_filtered = df.copy()
-  now = pd.Timestamp.now().normalize()
-
-  # Exclure les matchs/paris futurs (demain, après-demain, etc.)
-  df_filtered = df_filtered[df_filtered["parsed_date"] <= now]
-
-  # 1. Filtre Temporel
-  if period_choice == "7 Derniers Jours":
-    cutoff = now - pd.Timedelta(days=7)
-    df_filtered = df_filtered[df_filtered["parsed_date"] >= cutoff]
-  elif period_choice == "30 Derniers Jours":
-    cutoff = now - pd.Timedelta(days=30)
-    df_filtered = df_filtered[df_filtered["parsed_date"] >= cutoff]
-  elif period_choice == "Année en Cours (YTD)":
-    start_of_year = pd.Timestamp(now.year, 1, 1)
-    df_filtered = df_filtered[df_filtered["parsed_date"] >= start_of_year]
-
-  # 2. Filtre Timing Pari
-  if timing_choice != "Tout timing (Tous)":
-    df_filtered = df_filtered[
-        df_filtered["timing_pari"].str.contains(
-            timing_choice, case=False, na=False
-        )
-    ]
-
-  return df_filtered.copy()
 
 
 def get_financial_summary(df_sub):
@@ -855,25 +818,13 @@ df_all = prepare_dataframe(df_raw)
 
 
 # ==========================================
-# 6. EN-TÊTE PRINCIPAL & FILTRE TEMPOREL DYNAMIQUE
+# 6. EN-TÊTE PRINCIPAL
 # ==========================================
 st.title("🏆 Scanner de Value Bets Pro (Buts & Tirs)")
 
-st.subheader("🗓️ Filtre Temporel & Période Glissante")
-period_choice = st.selectbox(
-    "Choisir l'horizon d'analyse :",
-    [
-        "7 Derniers Jours",
-        "30 Derniers Jours",
-        "Année en Cours (YTD)",
-        "Tout l'Historique",
-    ],
-    index=1,  # Par défaut sur 30 jours
-)
-
 
 # ==========================================
-# 7. BARRE LATÉRALE (SIDEBAR DYNAMIQUE)
+# 7. BARRE LATÉRALE (SIDEBAR & FILTRAGE SÉQUENTIEL)
 # ==========================================
 st.sidebar.header("🎯 Mode d'Analyse")
 match_mode = st.sidebar.radio(
@@ -885,9 +836,24 @@ cat_buts_main = st.sidebar.checkbox("⚽ Marchés Buts Principaux", value=True)
 cat_buts_team = st.sidebar.checkbox("🥅 Buts par Équipe", value=True)
 cat_shots = st.sidebar.checkbox("📊 Tirs & Tirs Cadrés", value=True)
 
-st.sidebar.header("⏱️ Filtre Timing de Pari")
+st.sidebar.divider()
+st.sidebar.header("🔍 Filtres & Hiérarchie d'Analyse")
+
+# 1. Filtre Temporel
+period_choice = st.sidebar.selectbox(
+    "1️⃣ Horizon d'analyse :",
+    [
+        "7 Derniers Jours",
+        "30 Derniers Jours",
+        "Année en Cours (YTD)",
+        "Tout l'Historique",
+    ],
+    index=1,
+)
+
+# 2. Timing de Pari
 timing_choice = st.sidebar.selectbox(
-    "Filtrer par prise de timing :",
+    "2️⃣ Timing de pari :",
     [
         "Tout timing (Tous)",
         "1. J-2+",
@@ -898,9 +864,75 @@ timing_choice = st.sidebar.selectbox(
     index=0,
 )
 
-st.sidebar.header("⚙️ Filtre de Cotes")
+# 3. Tranche de cotes (Piste 1)
+odds_tranche = st.sidebar.selectbox(
+    "3️⃣ Tranche de cotes :",
+    ["Toutes les cotes", "1.50 - 1.75", "1.75 - 2.00", "2.00 - 2.30"],
+    index=0,
+)
+
+# Application étape 1, 2 et 3 pour extraire les ligues disponibles (Piste 4)
+df_step1 = df_all.copy()
+now = pd.Timestamp.now().normalize()
+df_step1 = df_step1[df_step1["parsed_date"] <= now]
+
+if period_choice == "7 Derniers Jours":
+  cutoff = now - pd.Timedelta(days=7)
+  df_step1 = df_step1[df_step1["parsed_date"] >= cutoff]
+elif period_choice == "30 Derniers Jours":
+  cutoff = now - pd.Timedelta(days=30)
+  df_step1 = df_step1[df_step1["parsed_date"] >= cutoff]
+elif period_choice == "Année en Cours (YTD)":
+  start_of_year = pd.Timestamp(now.year, 1, 1)
+  df_step1 = df_step1[df_step1["parsed_date"] >= start_of_year]
+
+if timing_choice != "Tout timing (Tous)":
+  df_step1 = df_step1[
+      df_step1["timing_pari"].str.contains(timing_choice, case=False, na=False)
+  ]
+
+if odds_tranche == "1.50 - 1.75":
+  df_step1 = df_step1[
+      (df_step1["odds_num"] >= 1.50) & (df_step1["odds_num"] < 1.75)
+  ]
+elif odds_tranche == "1.75 - 2.00":
+  df_step1 = df_step1[
+      (df_step1["odds_num"] >= 1.75) & (df_step1["odds_num"] < 2.00)
+  ]
+elif odds_tranche == "2.00 - 2.30":
+  df_step1 = df_step1[
+      (df_step1["odds_num"] >= 2.00) & (df_step1["odds_num"] <= 2.30)
+  ]
+
+available_leagues = (
+    ["Toutes les ligues"]
+    + sorted(
+        [
+            str(l).strip()
+            for l in df_step1["league"].unique()
+            if str(l).strip() != ""
+        ]
+    )
+    if not df_step1.empty
+    else ["Toutes les ligues"]
+)
+
+# 4. Ligue (Piste 4)
+league_choice = st.sidebar.selectbox(
+    "4️⃣ Filtrer par Ligue :", options=available_leagues
+)
+
+# Filtrage final combiné
+if league_choice != "Toutes les ligues":
+  df_filtered = df_step1[
+      df_step1["league"].str.strip() == league_choice.strip()
+  ].copy()
+else:
+  df_filtered = df_step1.copy()
+
+st.sidebar.header("⚙️ Plage de Cotes Scanner")
 cote_min, cote_max = st.sidebar.slider(
-    "Plage de cotes autorisées",
+    "Plage de cotes autorisées (Scanner)",
     min_value=1.10,
     max_value=5.00,
     value=(1.50, 2.30),
@@ -913,9 +945,6 @@ if st.sidebar.button("🔄 Purger le cache & Actualiser"):
   st.cache_data.clear()
   st.rerun()
 
-
-# APPLICATION DES FILTRES COMBINÉS (TEMPOREL + TIMING PARI + EXCLUSION FUTUR)
-df_filtered = filter_by_period_and_timing(df_all, period_choice, timing_choice)
 
 # CALCUL DES MÉTRIQUES DYNAMIQUES (PERFORMANCE & FINANCES)
 if not df_filtered.empty:
@@ -1232,7 +1261,7 @@ if not df_filtered.empty:
   else:
     st.info(f"Aucun pari trouvé pour le marché '{market_choice_chart}'.")
 else:
-  st.info("Aucun pari trouvé sur la période et le timing sélectionnés.")
+  st.info("Aucun pari trouvé sur la période, le timing et les filtres sélectionnés.")
 
 # B. HEATMAP DE RENTABILITÉ
 st.markdown("---")
