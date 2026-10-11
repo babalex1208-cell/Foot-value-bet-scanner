@@ -328,7 +328,7 @@ def prepare_dataframe(df_raw):
 
   df = df_raw.copy()
 
-  col_date, col_league, col_paris = 0, 3, 5
+  col_date, col_timing, col_league, col_paris = 0, 2, 3, 5
   col_odds, col_edge, col_mises, col_gains_pertes = 7, 10, 12, 14
 
   raw_dates = (
@@ -353,6 +353,7 @@ def prepare_dataframe(df_raw):
     extracted = s.str.extract(r"(-?\d+\.?\d*)")[0]
     return pd.to_numeric(extracted, errors="coerce").fillna(0.0)
 
+  df["timing_pari"] = df.iloc[:, col_timing].astype(str).str.strip()
   df["league"] = df.iloc[:, col_league].astype(str).str.strip()
   df["pari"] = df.iloc[:, col_paris].astype(str).str.strip()
   df["odds_num"] = clean_num(df.iloc[:, col_odds])
@@ -375,24 +376,32 @@ def prepare_dataframe(df_raw):
   return df
 
 
-def filter_by_period(df, period_choice):
-  """Filtre le DataFrame selon la période choisie dans le sélecteur."""
+def filter_by_period_and_timing(df, period_choice, timing_choice):
+  """Filtre le DataFrame selon la période ET le timing de pari choisi."""
   if df is None or df.empty:
     return pd.DataFrame()
 
+  df_filtered = df.copy()
   now = pd.Timestamp.now()
 
+  # 1. Filtre Temporel
   if period_choice == "7 Derniers Jours":
     cutoff = now - pd.Timedelta(days=7)
-    return df[df["parsed_date"] >= cutoff].copy()
+    df_filtered = df_filtered[df_filtered["parsed_date"] >= cutoff]
   elif period_choice == "30 Derniers Jours":
     cutoff = now - pd.Timedelta(days=30)
-    return df[df["parsed_date"] >= cutoff].copy()
+    df_filtered = df_filtered[df_filtered["parsed_date"] >= cutoff]
   elif period_choice == "Année en Cours (YTD)":
     start_of_year = pd.Timestamp(now.year, 1, 1)
-    return df[df["parsed_date"] >= start_of_year].copy()
-  else:  # "Tout l'Historique"
-    return df.copy()
+    df_filtered = df_filtered[df_filtered["parsed_date"] >= start_of_year]
+
+  # 2. Filtre Timing Pari
+  if timing_choice != "Tout timing (Tous)":
+    df_filtered = df_filtered[
+        df_filtered["timing_pari"].str.contains(timing_choice, case=False, na=False)
+    ]
+
+  return df_filtered.copy()
 
 
 def get_financial_summary(df_sub):
@@ -772,8 +781,51 @@ period_choice = st.selectbox(
     index=1,  # Par défaut sur 30 jours
 )
 
-# Application immédiate du filtre temporel
-df_filtered = filter_by_period(df_all, period_choice)
+
+# ==========================================
+# 7. BARRE LATÉRALE (SIDEBAR DYNAMIQUE)
+# ==========================================
+st.sidebar.header("🎯 Mode d'Analyse")
+match_mode = st.sidebar.radio(
+    "Sélectionnez le contexte", ["Avant-match (Statique)", "En direct (Live)"]
+)
+
+st.sidebar.header("📋 Catégories à Analyser")
+cat_buts_main = st.sidebar.checkbox("⚽ Marchés Buts Principaux", value=True)
+cat_buts_team = st.sidebar.checkbox("🥅 Buts par Équipe", value=True)
+cat_shots = st.sidebar.checkbox("📊 Tirs & Tirs Cadrés", value=True)
+
+st.sidebar.header("⏱️ Filtre Timing de Pari")
+timing_choice = st.sidebar.selectbox(
+    "Filtrer par prise de timing :",
+    [
+        "Tout timing (Tous)",
+        "1. J-2+",
+        "2. J-1",
+        "3. H-12 à H-2",
+        "4. H-2 à H",
+    ],
+    index=0,
+)
+
+st.sidebar.header("⚙️ Filtre de Cotes")
+cote_min, cote_max = st.sidebar.slider(
+    "Plage de cotes autorisées",
+    min_value=1.10,
+    max_value=5.00,
+    value=(1.50, 2.30),
+    step=0.05,
+)
+
+st.sidebar.divider()
+
+if st.sidebar.button("🔄 Purger le cache & Actualiser"):
+  st.cache_data.clear()
+  st.rerun()
+
+
+# APPLICATION DES FILTRES COMBINÉS (TEMPOREL + TIMING PARI)
+df_filtered = filter_by_period_and_timing(df_all, period_choice, timing_choice)
 
 # CALCUL DES MÉTRIQUES DYNAMIQUES (PERFORMANCE & FINANCES)
 if not df_filtered.empty:
@@ -798,7 +850,7 @@ if not df_filtered.empty:
   fin_buts = get_financial_summary(df_buts)
   fin_tirs = get_financial_summary(df_tirs)
 
-  # Top Ligues raccordées au filtre temporel actif
+  # Top Ligues raccordées aux filtres actifs
   top_league_global = compute_top_league(df_filtered)
   top_league_buts = compute_top_league(df_buts)
   top_league_tirs = compute_top_league(df_tirs)
@@ -815,34 +867,6 @@ else:
   top_league_buts = "Aucun pari"
   top_league_tirs = "Aucun pari"
 
-
-# ==========================================
-# 7. BARRE LATÉRALE (SIDEBAR DYNAMIQUE)
-# ==========================================
-st.sidebar.header("🎯 Mode d'Analyse")
-match_mode = st.sidebar.radio(
-    "Sélectionnez le contexte", ["Avant-match (Statique)", "En direct (Live)"]
-)
-
-st.sidebar.header("📋 Catégories à Analyser")
-cat_buts_main = st.sidebar.checkbox("⚽ Marchés Buts Principaux", value=True)
-cat_buts_team = st.sidebar.checkbox("🥅 Buts par Équipe", value=True)
-cat_shots = st.sidebar.checkbox("📊 Tirs & Tirs Cadrés", value=True)
-
-st.sidebar.header("⚙️ Filtre de Cotes")
-cote_min, cote_max = st.sidebar.slider(
-    "Plage de cotes autorisées",
-    min_value=1.10,
-    max_value=5.00,
-    value=(1.50, 2.30),
-    step=0.05,
-)
-
-st.sidebar.divider()
-
-if st.sidebar.button("🔄 Purger le cache & Actualiser"):
-  st.cache_data.clear()
-  st.rerun()
 
 # 1. PERFORMANCE TRI-MARCHÉ
 st.sidebar.markdown(
@@ -1084,7 +1108,7 @@ if not df_filtered.empty:
   else:
     st.info(f"Aucun pari trouvé pour le marché '{market_choice_chart}'.")
 else:
-  st.info("Aucun pari trouvé sur la période sélectionnée.")
+  st.info("Aucun pari trouvé sur la période et le timing sélectionnés.")
 
 # B. HEATMAP DE RENTABILITÉ
 st.markdown("---")
