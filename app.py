@@ -321,6 +321,84 @@ def compute_top_league(df_subset):
   )
 
 
+def compute_top_timing(df_subset):
+  """Calcule dynamiquement le meilleur timing de prise de pari sur le DataFrame filtré."""
+  if df_subset is None or df_subset.empty:
+    return "Aucun pari"
+
+  col_timing = (
+      "timing_pari" if "timing_pari" in df_subset.columns else df_subset.columns[2]
+  )
+  col_gains = (
+      "gains_num" if "gains_num" in df_subset.columns else df_subset.columns[14]
+  )
+  col_mises = (
+      "mises_num" if "mises_num" in df_subset.columns else df_subset.columns[12]
+  )
+  col_edge = (
+      "edge_pct" if "edge_pct" in df_subset.columns else df_subset.columns[10]
+  )
+
+  df_valid = df_subset[
+      (df_subset[col_timing].astype(str).str.strip() != "")
+      & (~df_subset[col_timing].astype(str).str.contains("€|Total|Bankroll", case=False, na=False))
+  ].copy()
+
+  if df_valid.empty:
+    return "Aucun pari"
+
+  df_valid["timing_clean"] = df_valid[col_timing].astype(str).str.strip()
+
+  stats = (
+      df_valid.groupby("timing_clean")
+      .agg(
+          pnl=(col_gains, "sum"),
+          mises=(col_mises, "sum"),
+          nb_bets=("timing_clean", "count"),
+          avg_edge=(col_edge, "mean"),
+          std_edge=(col_edge, "std"),
+      )
+      .reset_index()
+  )
+
+  stats["std_edge"] = stats["std_edge"].fillna(0.0)
+  stats["roi"] = np.where(
+      stats["mises"] > 0, (stats["pnl"] / stats["mises"]) * 100.0, 0.0
+  )
+
+  pos_stats = stats[stats["pnl"] > 0].copy()
+  if pos_stats.empty:
+    return "Aucun P&L positif"
+
+  def normalize(series):
+    s_min, s_max = series.min(), series.max()
+    return (series - s_min) / (s_max - s_min) if s_max > s_min else 1.0
+
+  norm_pnl = normalize(pos_stats["pnl"])
+  norm_roi = normalize(pos_stats["roi"])
+  norm_vol = normalize(np.log1p(pos_stats["nb_bets"]))
+  norm_edge = normalize(pos_stats["avg_edge"])
+
+  w_pnl, w_roi, w_vol, w_edge = 0.40, 0.25, 0.20, 0.15
+  pos_stats["score"] = (
+      (w_pnl * norm_pnl)
+      + (w_roi * norm_roi)
+      + (w_vol * norm_vol)
+      + (w_edge * norm_edge)
+  )
+
+  best = pos_stats.sort_values(by="score", ascending=False).iloc[0]
+  pnl_formatted = f"{best['pnl']:+,.2f} €".replace(",", " ")
+  nb_bets_val = int(best["nb_bets"])
+  bets_label = "pari" if nb_bets_val == 1 else "paris"
+  std_val = best["std_edge"]
+
+  return (
+      f"{best['timing_clean']} ({pnl_formatted} | {best['roi']:+.1f}% |"
+      f" {nb_bets_val} {bets_label} | {best['avg_edge']:+.1f}% ± {std_val:.1f}% edge)"
+  )
+
+
 def prepare_dataframe(df_raw):
   """Prépare et nettoie le DataFrame brut de Google Sheets pour tous les modules."""
   if df_raw is None or df_raw.empty:
@@ -854,6 +932,11 @@ if not df_filtered.empty:
   top_league_global = compute_top_league(df_filtered)
   top_league_buts = compute_top_league(df_buts)
   top_league_tirs = compute_top_league(df_tirs)
+
+  # Top Timing Bets raccordés aux filtres actifs
+  top_timing_global = compute_top_timing(df_filtered)
+  top_timing_buts = compute_top_timing(df_buts)
+  top_timing_tirs = compute_top_timing(df_tirs)
 else:
   total_vbs = 0
   pct_buts, pct_tirs = 0.5, 0.5
@@ -866,6 +949,9 @@ else:
   top_league_global = "Aucun pari"
   top_league_buts = "Aucun pari"
   top_league_tirs = "Aucun pari"
+  top_timing_global = "Aucun pari"
+  top_timing_buts = "Aucun pari"
+  top_timing_tirs = "Aucun pari"
 
 
 # 1. PERFORMANCE TRI-MARCHÉ
@@ -1021,6 +1107,32 @@ st.sidebar.markdown(
     <div style="font-size: 0.85rem; line-height: 1.45; background-color: #1e2129; padding: 9px 11px; border-radius: 6px; margin-bottom: 8px; border-left: 3.5px solid #00CC96;">
         <span style="font-weight: bold; color: #a0aab8; font-size: 0.75rem; text-transform: uppercase;">📊 Marchés Tirs</span><br>
         <span style="color: #ffffff; font-weight: 500; font-size: 0.83rem;">{top_league_tirs}</span>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+# 5. TOP TIMING BETS
+st.sidebar.markdown("---")
+st.sidebar.markdown(
+    "<span style='font-size: 1.2rem; font-weight: bold;'>⏱️ Top Timing Bets"
+    " (Période Active)</span>",
+    unsafe_allow_html=True,
+)
+
+st.sidebar.markdown(
+    f"""
+    <div style="font-size: 0.85rem; line-height: 1.45; background-color: #1e2129; padding: 9px 11px; border-radius: 6px; margin-top: 10px; margin-bottom: 8px; border-left: 3.5px solid #AB63FA;">
+        <span style="font-weight: bold; color: #a0aab8; font-size: 0.75rem; text-transform: uppercase;">🌐 Global</span><br>
+        <span style="color: #ffffff; font-weight: 500; font-size: 0.83rem;">{top_timing_global}</span>
+    </div>
+    <div style="font-size: 0.85rem; line-height: 1.45; background-color: #1e2129; padding: 9px 11px; border-radius: 6px; margin-bottom: 8px; border-left: 3.5px solid #AB63FA;">
+        <span style="font-weight: bold; color: #a0aab8; font-size: 0.75rem; text-transform: uppercase;">⚽ Marchés Buts</span><br>
+        <span style="color: #ffffff; font-weight: 500; font-size: 0.83rem;">{top_timing_buts}</span>
+    </div>
+    <div style="font-size: 0.85rem; line-height: 1.45; background-color: #1e2129; padding: 9px 11px; border-radius: 6px; margin-bottom: 8px; border-left: 3.5px solid #AB63FA;">
+        <span style="font-weight: bold; color: #a0aab8; font-size: 0.75rem; text-transform: uppercase;">📊 Marchés Tirs</span><br>
+        <span style="color: #ffffff; font-weight: 500; font-size: 0.83rem;">{top_timing_tirs}</span>
     </div>
     """,
     unsafe_allow_html=True,
@@ -1313,7 +1425,7 @@ with st.form("form_saisie_cotes"):
       btts_no = c4.number_input("BTTS Non", value=None, step=0.01)
 
   if cat_buts_team:
-    with st.expander("🥅 BUTS PAR ÉQUIPE (Over / Under 0.5 et 1.5)"):
+    with st.expander("场地 BUTS PAR ÉQUIPE (Over / Under 0.5 et 1.5)"):
       st.markdown(f"**🏠 {home_team} (Domicile)**")
       c1, c2, c3, c4 = st.columns(4)
       hg_o05 = c1.number_input("Over 0.5 (Dom)", value=None, step=0.01)
