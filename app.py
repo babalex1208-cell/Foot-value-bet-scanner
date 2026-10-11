@@ -341,7 +341,11 @@ def compute_top_timing(df_subset):
 
   df_valid = df_subset[
       (df_subset[col_timing].astype(str).str.strip() != "")
-      & (~df_subset[col_timing].astype(str).str.contains("€|Total|Bankroll", case=False, na=False))
+      & (
+          ~df_subset[col_timing]
+          .astype(str)
+          .str.contains("€|Total|Bankroll", case=False, na=False)
+      )
   ].copy()
 
   if df_valid.empty:
@@ -455,12 +459,18 @@ def prepare_dataframe(df_raw):
 
 
 def filter_by_period_and_timing(df, period_choice, timing_choice):
-  """Filtre le DataFrame selon la période ET le timing de pari choisi."""
+  """Filtre le DataFrame selon la période ET le timing de pari choisi.
+
+  Exclut systématiquement les paris dont la date est dans le futur.
+  """
   if df is None or df.empty:
     return pd.DataFrame()
 
   df_filtered = df.copy()
-  now = pd.Timestamp.now()
+  now = pd.Timestamp.now().normalize()
+
+  # Exclure les matchs/paris futurs (demain, après-demain, etc.)
+  df_filtered = df_filtered[df_filtered["parsed_date"] <= now]
 
   # 1. Filtre Temporel
   if period_choice == "7 Derniers Jours":
@@ -476,7 +486,9 @@ def filter_by_period_and_timing(df, period_choice, timing_choice):
   # 2. Filtre Timing Pari
   if timing_choice != "Tout timing (Tous)":
     df_filtered = df_filtered[
-        df_filtered["timing_pari"].str.contains(timing_choice, case=False, na=False)
+        df_filtered["timing_pari"].str.contains(
+            timing_choice, case=False, na=False
+        )
     ]
 
   return df_filtered.copy()
@@ -902,7 +914,7 @@ if st.sidebar.button("🔄 Purger le cache & Actualiser"):
   st.rerun()
 
 
-# APPLICATION DES FILTRES COMBINÉS (TEMPOREL + TIMING PARI)
+# APPLICATION DES FILTRES COMBINÉS (TEMPOREL + TIMING PARI + EXCLUSION FUTUR)
 df_filtered = filter_by_period_and_timing(df_all, period_choice, timing_choice)
 
 # CALCUL DES MÉTRIQUES DYNAMIQUES (PERFORMANCE & FINANCES)
@@ -1425,7 +1437,7 @@ with st.form("form_saisie_cotes"):
       btts_no = c4.number_input("BTTS Non", value=None, step=0.01)
 
   if cat_buts_team:
-    with st.expander("场地 BUTS PAR ÉQUIPE (Over / Under 0.5 et 1.5)"):
+    with st.expander("🥅 BUTS PAR ÉQUIPE (Over / Under 0.5 et 1.5)"):
       st.markdown(f"**🏠 {home_team} (Domicile)**")
       c1, c2, c3, c4 = st.columns(4)
       hg_o05 = c1.number_input("Over 0.5 (Dom)", value=None, step=0.01)
