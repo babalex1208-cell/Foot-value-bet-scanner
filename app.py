@@ -517,7 +517,6 @@ def generate_pnl_chart_bytes(df_sub):
   df_pnl["pnl_real_cum"] = df_pnl["gains_num"].cumsum()
   df_pnl["pnl_theo_cum"] = df_pnl["pnl_theo_step"].cumsum()
 
-  # Format compact (hauteur réduite) pour éviter les superpositions dans le PDF
   fig, ax = plt.subplots(figsize=(8, 2.2), dpi=200)
   fig.patch.set_facecolor("#ffffff")
   ax.set_facecolor("#f9f9f9")
@@ -561,10 +560,23 @@ def generate_pnl_chart_bytes(df_sub):
   return buf
 
 
-def generate_pdf_report(df_filtered, period_label):
-  """Génère un rapport PDF complet structuré en 3 rubriques avec mise en page optimisée."""
+def generate_pdf_report(
+    df_filtered, period_label, timing_label, odds_label, league_label
+):
+  """Génère un rapport PDF complet structuré en 3 rubriques avec affichage des filtres actifs."""
   pdf = FPDF()
   pdf.set_auto_page_break(auto=True, margin=15)
+
+  # Construction de la chaîne des filtres actifs pour le sous-titre
+  active_filters_parts = [f"Période: {period_label}"]
+  if timing_label != "Tout timing (Tous)":
+    active_filters_parts.append(f"Timing: {timing_label}")
+  if odds_label != "Toutes les cotes":
+    active_filters_parts.append(f"Cotes: {odds_label}")
+  if league_label != "Toutes les ligues":
+    active_filters_parts.append(f"Ligue: {league_label}")
+
+  filters_subtitle = " | ".join(active_filters_parts)
 
   # Séparation des marchés
   tirs_mask = df_filtered["type_marche"] == "Tirs & Cadrés"
@@ -581,21 +593,26 @@ def generate_pdf_report(df_filtered, period_label):
     pdf.add_page()
 
     # En-tête principal
-    pdf.set_font("Helvetica", "B", 15)
+    pdf.set_font("Helvetica", "B", 14)
     pdf.set_text_color(0, 51, 102)
     pdf.cell(
         0,
-        8,
-        clean_for_pdf(f"Bilan de Performance Value Bets - {period_label}"),
+        7,
+        clean_for_pdf("Bilan de Performance Value Bets"),
         ln=True,
         align="C",
     )
 
-    pdf.set_font("Helvetica", "B", 12)
+    pdf.set_font("Helvetica", "B", 11)
     pdf.set_text_color(60, 60, 60)
-    pdf.cell(0, 6, clean_for_pdf(title), ln=True, align="C")
+    pdf.cell(0, 5.5, clean_for_pdf(title), ln=True, align="C")
 
-    pdf.set_font("Helvetica", "I", 8.5)
+    # Rappel des filtres actifs dans les gros titres de la première page / chaque page
+    pdf.set_font("Helvetica", "B", 8.5)
+    pdf.set_text_color(0, 102, 204)
+    pdf.cell(0, 4.5, clean_for_pdf(f"Filtres : {filters_subtitle}"), ln=True, align="C")
+
+    pdf.set_font("Helvetica", "I", 8)
     pdf.set_text_color(120, 120, 120)
     pdf.cell(
         0,
@@ -674,13 +691,11 @@ def generate_pdf_report(df_filtered, period_label):
     pdf.multi_cell(0, 4.5, clean_for_pdf(top_t))
     pdf.ln(3)
 
-    # 2. GRAPHIQUE (PLEINE LARGEUR AVEC ESPACEMENT CORRIGÉ)
+    # 2. GRAPHIQUE (PLEINE LARGEUR)
     chart_buf = generate_pnl_chart_bytes(df_sub)
     if chart_buf:
       pdf.image(chart_buf, x=15, y=pdf.get_y(), w=180)
-      pdf.ln(
-          54
-      )  # Espace réservé adapté à la hauteur compacte du nouveau graphique
+      pdf.ln(54)
     else:
       pdf.set_font("Helvetica", "I", 8.5)
       pdf.set_text_color(150, 150, 150)
@@ -1561,18 +1576,39 @@ if not df_filtered.empty:
 else:
   st.info("Pas assez de données pour afficher la heatmap.")
 
-# C. EXPORT PDF DU BILAN
+# C. EXPORT PDF DU BILAN AVEC NOM DE FICHIER DYNAMIQUE
 st.markdown("---")
 st.subheader("📄 Exportation du Bilan PDF Tripartite")
 
 if not df_filtered.empty:
-  pdf_bytes = generate_pdf_report(df_filtered, period_choice)
+  pdf_bytes = generate_pdf_report(
+      df_filtered, period_choice, timing_choice, odds_tranche, league_choice
+  )
+
+  # Construction dynamique du nom de fichier selon les filtres actifs
+  file_name_parts = ["bilan_value_bets"]
+  if period_choice:
+    file_name_parts.append(
+        period_choice.lower()
+        .replace(" ", "_")
+        .replace("é", "e")
+        .replace("à", "a")
+    )
+  if timing_choice and timing_choice != "Tout timing (Tous)":
+    file_name_parts.append(
+        timing_choice.replace(" ", "_").replace(".", "").replace("+", "plus")
+    )
+  if odds_tranche and odds_tranche != "Toutes les cotes":
+    file_name_parts.append(odds_tranche.replace(" ", "").replace("-", "_"))
+  if league_choice and league_choice != "Toutes les ligues":
+    file_name_parts.append(league_choice.replace(" ", "_"))
+
+  pdf_filename = "_".join(file_name_parts) + ".pdf"
+
   st.download_button(
-      label=f"📥 Télécharger le Bilan PDF Complet 3-Marchés ({period_choice})",
+      label=f"📥 Télécharger le Bilan PDF Complet ({period_choice})",
       data=pdf_bytes,
-      file_name=(
-          f"bilan_value_bets_complet_{period_choice.lower().replace(' ', '_')}.pdf"
-      ),
+      file_name=pdf_filename,
       mime="application/pdf",
   )
 else:
