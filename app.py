@@ -486,6 +486,13 @@ def get_performance_summary(df_sub):
   }
 
 
+def clean_for_pdf(text):
+  """Nettoie le texte pour l'encodage Latin-1 de FPDF (supprime les émojis et caractères non supportés)."""
+  if not isinstance(text, str):
+    text = str(text)
+  return text.encode("latin-1", "ignore").decode("latin-1")
+
+
 def generate_pnl_chart_bytes(df_sub):
   """Génère le graphique P&L Réel vs Théorique pour un sous-ensemble sous forme d'image BytesIO."""
   if df_sub is None or df_sub.empty:
@@ -537,7 +544,9 @@ def generate_pnl_chart_bytes(df_sub):
   plt.tight_layout()
 
   buf = io.BytesIO()
-  plt.savefig(buf, format="png", bbox_inches="tight", facecolor=fig.get_facecolor())
+  plt.savefig(
+      buf, format="png", bbox_inches="tight", facecolor=fig.get_facecolor()
+  )
   plt.close(fig)
   buf.seek(0)
   return buf
@@ -554,9 +563,9 @@ def generate_pdf_report(df_filtered, period_label):
   df_tirs = df_filtered[tirs_mask]
 
   sections = [
-      ("🌐 MARCHÉ GLOBAL", df_filtered),
-      ("⚽ MARCHÉ BUTS", df_buts),
-      ("📊 MARCHÉ TIRS", df_tirs),
+      ("MARCHE GLOBAL", df_filtered),
+      ("MARCHE BUTS", df_buts),
+      ("MARCHE TIRS", df_tirs),
   ]
 
   for title, df_sub in sections:
@@ -566,17 +575,23 @@ def generate_pdf_report(df_filtered, period_label):
     pdf.set_font("Helvetica", "B", 15)
     pdf.set_text_color(0, 51, 102)
     pdf.cell(
-        0, 10, f"Bilan de Performance Value Bets - {period_label}", ln=True, align="C"
+        0,
+        10,
+        clean_for_pdf(f"Bilan de Performance Value Bets - {period_label}"),
+        ln=True,
+        align="C",
     )
     pdf.set_font("Helvetica", "B", 13)
     pdf.set_text_color(40, 40, 40)
-    pdf.cell(0, 8, title, ln=True, align="C")
+    pdf.cell(0, 8, clean_for_pdf(title), ln=True, align="C")
     pdf.set_font("Helvetica", "", 9)
     pdf.set_text_color(100, 100, 100)
     pdf.cell(
         0,
         5,
-        f'Généré le {pd.Timestamp.now().strftime("%d/%m/%Y à %H:%M")}',
+        clean_for_pdf(
+            f'Généré le {pd.Timestamp.now().strftime("%d/%m/%Y à %H:%M")}'
+        ),
         ln=True,
         align="C",
     )
@@ -594,32 +609,46 @@ def generate_pdf_report(df_filtered, period_label):
     # Colonne Gauche : Métriques, Top Ligue, Top Timing
     pdf.set_font("Helvetica", "B", 10)
     pdf.set_text_color(0, 0, 0)
-    pdf.cell(95, 6, "Résumé & Statistiques :", ln=True)
+    pdf.cell(95, 6, clean_for_pdf("Résumé & Statistiques :"), ln=True)
     pdf.set_font("Helvetica", "", 9)
 
-    pdf.cell(95, 5, f"• Volume Total : {fin['vbs']} Value Bets", ln=True)
-    pdf.cell(95, 5, f"• Total Mises : {fin['mises']:,.2f} EUR", ln=True)
-    pdf.cell(95, 5, f"• P&L Net Réel : {fin['pnl']:+,.2f} EUR", ln=True)
-    pdf.cell(95, 5, f"• ROI Réel : {fin['roi']:+.2f} %", ln=True)
-    pdf.cell(95, 5, f"• Cote Moyenne : {perf['avg_odds']:.2f}", ln=True)
+    pdf.cell(
+        95, 5, clean_for_pdf(f"• Volume Total : {fin['vbs']} Value Bets"), ln=True
+    )
+    pdf.cell(
+        95, 5, clean_for_pdf(f"• Total Mises : {fin['mises']:,.2f} EUR"), ln=True
+    )
     pdf.cell(
         95,
         5,
-        f"• Edge Moyen : +{perf['avg_edge']:.1f}% ± {perf['std_edge']:.1f}%",
+        clean_for_pdf(f"• P&L Net Réel : {fin['pnl']:+,.2f} EUR"),
+        ln=True,
+    )
+    pdf.cell(95, 5, clean_for_pdf(f"• ROI Réel : {fin['roi']:+.2f} %"), ln=True)
+    pdf.cell(
+        95, 5, clean_for_pdf(f"• Cote Moyenne : {perf['avg_odds']:.2f}"), ln=True
+    )
+    pdf.cell(
+        95,
+        5,
+        clean_for_pdf(
+            f"• Edge Moyen : +{perf['avg_edge']:.1f}% ±"
+            f" {perf['std_edge']:.1f}%"
+        ),
         ln=True,
     )
     pdf.ln(2)
 
     pdf.set_font("Helvetica", "B", 9)
-    pdf.cell(95, 5, "🏆 Top Ligue :", ln=True)
+    pdf.cell(95, 5, clean_for_pdf("Top Ligue :"), ln=True)
     pdf.set_font("Helvetica", "", 8)
-    pdf.multi_cell(90, 4, top_l)
+    pdf.multi_cell(90, 4, clean_for_pdf(top_l))
     pdf.ln(1)
 
     pdf.set_font("Helvetica", "B", 9)
-    pdf.cell(95, 5, "⏱️ Top Timing :", ln=True)
+    pdf.cell(95, 5, clean_for_pdf("Top Timing :"), ln=True)
     pdf.set_font("Helvetica", "", 8)
-    pdf.multi_cell(90, 4, top_t)
+    pdf.multi_cell(90, 4, clean_for_pdf(top_t))
 
     y_left_end = pdf.get_y()
 
@@ -635,7 +664,12 @@ def generate_pdf_report(df_filtered, period_label):
     # 2. BLOC EN BAS : Tableau exhaustif de TOUTES les ligues (classé par volume)
     pdf.set_font("Helvetica", "B", 10)
     pdf.set_text_color(0, 0, 0)
-    pdf.cell(0, 6, "Classement Exhaustif des Ligues par Volume :", ln=True)
+    pdf.cell(
+        0,
+        6,
+        clean_for_pdf("Classement Exhaustif des Ligues par Volume :"),
+        ln=True,
+    )
     pdf.ln(2)
 
     if not df_sub.empty:
@@ -679,21 +713,21 @@ def generate_pdf_report(df_filtered, period_label):
         # En-tête Tableau
         pdf.set_font("Helvetica", "B", 8)
         pdf.set_fill_color(230, 230, 230)
-        pdf.cell(65, 6, "Ligue", border=1, fill=True)
-        pdf.cell(25, 6, "Volume", border=1, align="C", fill=True)
-        pdf.cell(35, 6, "Mises (EUR)", border=1, align="R", fill=True)
-        pdf.cell(35, 6, "P&L (EUR)", border=1, align="R", fill=True)
-        pdf.cell(30, 6, "ROI (%)", border=1, align="R", fill=True)
+        pdf.cell(65, 6, clean_for_pdf("Ligue"), border=1, fill=True)
+        pdf.cell(25, 6, clean_for_pdf("Volume"), border=1, align="C", fill=True)
+        pdf.cell(35, 6, clean_for_pdf("Mises (EUR)"), border=1, align="R", fill=True)
+        pdf.cell(35, 6, clean_for_pdf("P&L (EUR)"), border=1, align="R", fill=True)
+        pdf.cell(30, 6, clean_for_pdf("ROI (%)"), border=1, align="R", fill=True)
         pdf.ln()
 
         # Lignes Tableau
         pdf.set_font("Helvetica", "", 8)
         for _, row in league_summary.iterrows():
-          pdf.cell(65, 5, str(row["league_clean"])[:35], border=1)
-          pdf.cell(25, 5, str(int(row["nb_bets"])), border=1, align="C")
-          pdf.cell(35, 5, f"{row['mises']:,.2f}", border=1, align="R")
-          pdf.cell(35, 5, f"{row['pnl']:+,.2f}", border=1, align="R")
-          pdf.cell(30, 5, f"{row['roi']:+.1f} %", border=1, align="R")
+          pdf.cell(65, 5, clean_for_pdf(str(row["league_clean"])[:35]), border=1)
+          pdf.cell(25, 5, clean_for_pdf(str(int(row["nb_bets"]))), border=1, align="C")
+          pdf.cell(35, 5, clean_for_pdf(f"{row['mises']:,.2f}"), border=1, align="R")
+          pdf.cell(35, 5, clean_for_pdf(f"{row['pnl']:+,.2f}"), border=1, align="R")
+          pdf.cell(30, 5, clean_for_pdf(f"{row['roi']:+.1f} %"), border=1, align="R")
           pdf.ln()
 
   pdf_buffer = io.BytesIO()
