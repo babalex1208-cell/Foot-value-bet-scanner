@@ -517,7 +517,7 @@ def generate_pnl_chart_bytes(df_sub):
   df_pnl["pnl_real_cum"] = df_pnl["gains_num"].cumsum()
   df_pnl["pnl_theo_cum"] = df_pnl["pnl_theo_step"].cumsum()
 
-  fig, ax = plt.subplots(figsize=(8, 3.2), dpi=200)
+  fig, ax = plt.subplots(figsize=(8, 3.0), dpi=200)
   fig.patch.set_facecolor("#ffffff")
   ax.set_facecolor("#f9f9f9")
 
@@ -539,16 +539,16 @@ def generate_pnl_chart_bytes(df_sub):
 
   ax.set_title(
       "Courbe de Variance (P&L Réel vs Théorique)",
-      fontsize=11,
+      fontsize=10,
       fontweight="bold",
-      pad=10,
+      pad=8,
   )
-  ax.set_ylabel("Euros (€)", fontsize=9, fontweight="bold")
-  ax.tick_params(axis="both", labelsize=8)
+  ax.set_ylabel("Euros (€)", fontsize=8, fontweight="bold")
+  ax.tick_params(axis="both", labelsize=7.5)
   ax.grid(True, linestyle=":", alpha=0.6)
-  ax.legend(fontsize=8, loc="upper left")
+  ax.legend(fontsize=7.5, loc="upper left")
 
-  fig.autofmt_xdate(rotation=25)
+  fig.autofmt_xdate(rotation=20)
   plt.tight_layout()
 
   buf = io.BytesIO()
@@ -580,32 +580,32 @@ def generate_pdf_report(df_filtered, period_label):
     pdf.add_page()
 
     # En-tête principal
-    pdf.set_font("Helvetica", "B", 16)
+    pdf.set_font("Helvetica", "B", 15)
     pdf.set_text_color(0, 51, 102)
     pdf.cell(
         0,
-        9,
+        8,
         clean_for_pdf(f"Bilan de Performance Value Bets - {period_label}"),
         ln=True,
         align="C",
     )
 
-    pdf.set_font("Helvetica", "B", 13)
+    pdf.set_font("Helvetica", "B", 12)
     pdf.set_text_color(60, 60, 60)
-    pdf.cell(0, 7, clean_for_pdf(title), ln=True, align="C")
+    pdf.cell(0, 6, clean_for_pdf(title), ln=True, align="C")
 
-    pdf.set_font("Helvetica", "I", 9)
+    pdf.set_font("Helvetica", "I", 8.5)
     pdf.set_text_color(120, 120, 120)
     pdf.cell(
         0,
-        5,
+        4,
         clean_for_pdf(
             f'Généré le {pd.Timestamp.now().strftime("%d/%m/%Y à %H:%M")}'
         ),
         ln=True,
         align="C",
     )
-    pdf.ln(5)
+    pdf.ln(3)
 
     # Calcul des métriques et tops
     fin = get_financial_summary(df_sub)
@@ -613,18 +613,18 @@ def generate_pdf_report(df_filtered, period_label):
     top_l = compute_top_league(df_sub)
     top_t = compute_top_timing(df_sub)
 
-    # 1. BLOC RÉSUMÉ & STATISTIQUES (MISE EN VALEUR DYNAMIQUE)
-    pdf.set_font("Helvetica", "B", 12)
+    # 1. BLOC RÉSUMÉ & STATISTIQUES
+    pdf.set_font("Helvetica", "B", 11)
     pdf.set_text_color(0, 51, 102)
-    pdf.cell(0, 6, clean_for_pdf("Résumé & Statistiques :"), ln=True)
-    pdf.ln(2)
+    pdf.cell(0, 5, clean_for_pdf("Résumé & Statistiques :"), ln=True)
+    pdf.ln(1)
 
     def write_key_val(label, val_str, val_bold=True, is_pnl=False, pnl_val=0):
-      pdf.set_font("Helvetica", "", 10)
+      pdf.set_font("Helvetica", "", 9.5)
       pdf.set_text_color(50, 50, 50)
-      pdf.write(5, clean_for_pdf(f"• {label} : "))
+      pdf.write(4.5, clean_for_pdf(f"• {label} : "))
 
-      pdf.set_font("Helvetica", "B" if val_bold else "", 10)
+      pdf.set_font("Helvetica", "B" if val_bold else "", 9.5)
       if is_pnl:
         if pnl_val > 0:
           pdf.set_text_color(0, 150, 0)
@@ -635,8 +635,8 @@ def generate_pdf_report(df_filtered, period_label):
       else:
         pdf.set_text_color(0, 0, 0)
 
-      pdf.write(5, clean_for_pdf(val_str))
-      pdf.ln(5.5)
+      pdf.write(4.5, clean_for_pdf(val_str))
+      pdf.ln(5)
 
     write_key_val("Volume Total", f"{fin['vbs']} Value Bets")
     write_key_val("Total Mises", f"{fin['mises']:,.2f} EUR")
@@ -653,50 +653,52 @@ def generate_pdf_report(df_filtered, period_label):
     write_key_val(
         "Edge Moyen", f"+{perf['avg_edge']:.1f}% ± {perf['std_edge']:.1f}%"
     )
-    pdf.ln(2)
+    pdf.ln(1)
 
-    # Mettre en gras Top Ligue et Top Timing
-    pdf.set_font("Helvetica", "B", 10)
-    pdf.set_text_color(0, 0, 0)
-    pdf.cell(30, 5, clean_for_pdf("Top Ligue : "))
+    # Top Ligue (Libellé ligne 1, Valeur ligne 2 en gras/couleur)
     pdf.set_font("Helvetica", "B", 9.5)
+    pdf.set_text_color(0, 0, 0)
+    pdf.cell(0, 4.5, clean_for_pdf("Top Ligue :"), ln=True)
+    pdf.set_font("Helvetica", "B", 9)
     pdf.set_text_color(0, 102, 204)
-    pdf.multi_cell(0, 5, clean_for_pdf(top_l))
+    pdf.multi_cell(0, 4.5, clean_for_pdf(top_l))
+    pdf.ln(1)
 
-    pdf.set_font("Helvetica", "B", 10)
-    pdf.set_text_color(0, 0, 0)
-    pdf.cell(30, 5, clean_for_pdf("Top Timing : "))
+    # Top Timing (Libellé ligne 1, Valeur ligne 2 en gras/couleur)
     pdf.set_font("Helvetica", "B", 9.5)
+    pdf.set_text_color(0, 0, 0)
+    pdf.cell(0, 4.5, clean_for_pdf("Top Timing :"), ln=True)
+    pdf.set_font("Helvetica", "B", 9)
     pdf.set_text_color(128, 0, 128)
-    pdf.multi_cell(0, 5, clean_for_pdf(top_t))
-    pdf.ln(4)
+    pdf.multi_cell(0, 4.5, clean_for_pdf(top_t))
+    pdf.ln(3)
 
-    # 2. GRAPHIQUE (INTEGRATION PLEINE LARGEUR)
+    # 2. GRAPHIQUE (PLEINE LARGEUR)
     chart_buf = generate_pnl_chart_bytes(df_sub)
     if chart_buf:
       pdf.image(chart_buf, x=15, y=pdf.get_y(), w=180)
-      pdf.ln(68)  # Espace réservé à l'image
+      pdf.ln(46)  # Espace réservé à l'image
     else:
-      pdf.set_font("Helvetica", "I", 9)
+      pdf.set_font("Helvetica", "I", 8.5)
       pdf.set_text_color(150, 150, 150)
       pdf.cell(
           0,
-          6,
+          5,
           clean_for_pdf("Données insuffisantes pour générer la courbe de P&L."),
           ln=True,
       )
-      pdf.ln(3)
+      pdf.ln(2)
 
-    # 3. TABLEAU DES LIGUES (DESIGN RESTRUCTURÉ)
-    pdf.set_font("Helvetica", "B", 11)
+    # 3. TABLEAU DES LIGUES
+    pdf.set_font("Helvetica", "B", 10.5)
     pdf.set_text_color(0, 51, 102)
     pdf.cell(
         0,
-        6,
+        5.5,
         clean_for_pdf("Classement Exhaustif des Ligues par Volume :"),
         ln=True,
     )
-    pdf.ln(2)
+    pdf.ln(1.5)
 
     if not df_sub.empty:
       col_league = "league" if "league" in df_sub.columns else df_sub.columns[3]
@@ -737,24 +739,24 @@ def generate_pdf_report(df_filtered, period_label):
         )
 
         # En-tête du tableau
-        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_font("Helvetica", "B", 8.5)
         pdf.set_fill_color(0, 51, 102)
         pdf.set_text_color(255, 255, 255)
-        pdf.cell(65, 6, clean_for_pdf("Ligue"), border=1, fill=True)
-        pdf.cell(25, 6, clean_for_pdf("Volume"), border=1, align="C", fill=True)
+        pdf.cell(65, 5.5, clean_for_pdf("Ligue"), border=1, fill=True)
+        pdf.cell(25, 5.5, clean_for_pdf("Volume"), border=1, align="C", fill=True)
         pdf.cell(
-            35, 6, clean_for_pdf("Mises (EUR)"), border=1, align="R", fill=True
+            35, 5.5, clean_for_pdf("Mises (EUR)"), border=1, align="R", fill=True
         )
         pdf.cell(
-            35, 6, clean_for_pdf("P&L (EUR)"), border=1, align="R", fill=True
+            35, 5.5, clean_for_pdf("P&L (EUR)"), border=1, align="R", fill=True
         )
         pdf.cell(
-            30, 6, clean_for_pdf("ROI (%)"), border=1, align="R", fill=True
+            30, 5.5, clean_for_pdf("ROI (%)"), border=1, align="R", fill=True
         )
         pdf.ln()
 
         # Corps du tableau avec lignes alternées
-        pdf.set_font("Helvetica", "", 8.5)
+        pdf.set_font("Helvetica", "", 8)
         fill_toggle = False
 
         for _, row in league_summary.iterrows():
@@ -766,26 +768,26 @@ def generate_pdf_report(df_filtered, period_label):
           pdf.set_text_color(0, 0, 0)
           pdf.cell(
               65,
-              5.5,
+              5,
               clean_for_pdf(str(row["league_clean"])[:35]),
               border=1,
               fill=True,
           )
 
-          pdf.set_font("Helvetica", "B", 8.5)
+          pdf.set_font("Helvetica", "B", 8)
           pdf.cell(
               25,
-              5.5,
+              5,
               clean_for_pdf(str(int(row["nb_bets"]))),
               border=1,
               align="C",
               fill=True,
           )
 
-          pdf.set_font("Helvetica", "", 8.5)
+          pdf.set_font("Helvetica", "", 8)
           pdf.cell(
               35,
-              5.5,
+              5,
               clean_for_pdf(f"{row['mises']:,.2f}"),
               border=1,
               align="R",
@@ -802,7 +804,7 @@ def generate_pdf_report(df_filtered, period_label):
 
           pdf.cell(
               35,
-              5.5,
+              5,
               clean_for_pdf(f"{row['pnl']:+,.2f}"),
               border=1,
               align="R",
@@ -810,7 +812,7 @@ def generate_pdf_report(df_filtered, period_label):
           )
           pdf.cell(
               30,
-              5.5,
+              5,
               clean_for_pdf(f"{row['roi']:+.1f} %"),
               border=1,
               align="R",
