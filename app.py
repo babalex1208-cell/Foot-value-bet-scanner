@@ -239,10 +239,7 @@ def fetch_raw_data_from_sheets(
 
 
 def compute_top_league(df_subset):
-  """Calcule dynamiquement la meilleure ligue sur le DataFrame filtré.
-
-  Index 4-facteurs : PnL (40%), ROI (25%), Volume Log (20%), Edge (15%).
-  """
+  """Calcule dynamiquement la meilleure ligue sur le DataFrame filtré."""
   if df_subset is None or df_subset.empty:
     return "Aucun pari"
 
@@ -487,7 +484,7 @@ def get_performance_summary(df_sub):
 
 
 def clean_for_pdf(text):
-  """Nettoie le texte pour l'encodage Latin-1 de FPDF (supprime les émojis et caractères non supportés)."""
+  """Nettoie le texte pour l'encodage Latin-1 de FPDF."""
   if not isinstance(text, str):
     text = str(text)
   return text.encode("latin-1", "ignore").decode("latin-1")
@@ -498,7 +495,10 @@ def generate_pnl_chart_bytes(df_sub):
   if df_sub is None or df_sub.empty:
     return None
 
-  df_chart = df_sub.copy()
+  df_chart = df_sub.dropna(subset=["parsed_date"]).copy()
+  if df_chart.empty:
+    return None
+
   df_chart["date_jour"] = df_chart["parsed_date"].dt.date
   df_chart["pnl_theo_step"] = df_chart["mises_num"] * (
       df_chart["edge_pct"] / 100.0
@@ -511,10 +511,13 @@ def generate_pnl_chart_bytes(df_sub):
       .sort_values("date_jour")
   )
 
+  if df_pnl.empty:
+    return None
+
   df_pnl["pnl_real_cum"] = df_pnl["gains_num"].cumsum()
   df_pnl["pnl_theo_cum"] = df_pnl["pnl_theo_step"].cumsum()
 
-  fig, ax = plt.subplots(figsize=(6, 3), dpi=200)
+  fig, ax = plt.subplots(figsize=(8, 3.2), dpi=200)
   fig.patch.set_facecolor("#ffffff")
   ax.set_facecolor("#f9f9f9")
 
@@ -522,7 +525,7 @@ def generate_pnl_chart_bytes(df_sub):
       df_pnl["date_jour"],
       df_pnl["pnl_real_cum"],
       color="#00CC96",
-      linewidth=2,
+      linewidth=2.2,
       label="P&L Réel (€)",
   )
   ax.plot(
@@ -534,13 +537,18 @@ def generate_pnl_chart_bytes(df_sub):
       label="P&L Théorique Attendu (€)",
   )
 
-  ax.set_title("Courbe de Variance (P&L)", fontsize=10, fontweight="bold")
-  ax.set_ylabel("Euros (€)", fontsize=8)
-  ax.tick_params(axis="both", labelsize=7)
+  ax.set_title(
+      "Courbe de Variance (P&L Réel vs Théorique)",
+      fontsize=11,
+      fontweight="bold",
+      pad=10,
+  )
+  ax.set_ylabel("Euros (€)", fontsize=9, fontweight="bold")
+  ax.tick_params(axis="both", labelsize=8)
   ax.grid(True, linestyle=":", alpha=0.6)
-  ax.legend(fontsize=7, loc="upper left")
+  ax.legend(fontsize=8, loc="upper left")
 
-  fig.autofmt_xdate(rotation=30)
+  fig.autofmt_xdate(rotation=25)
   plt.tight_layout()
 
   buf = io.BytesIO()
@@ -553,7 +561,7 @@ def generate_pnl_chart_bytes(df_sub):
 
 
 def generate_pdf_report(df_filtered, period_label):
-  """Génère un rapport PDF complet structuré en 3 rubriques (Global, Buts, Tirs)."""
+  """Génère un rapport PDF complet structuré en 3 rubriques avec mise en page optimisée."""
   pdf = FPDF()
   pdf.set_auto_page_break(auto=True, margin=15)
 
@@ -571,21 +579,23 @@ def generate_pdf_report(df_filtered, period_label):
   for title, df_sub in sections:
     pdf.add_page()
 
-    # En-tête de la rubrique
-    pdf.set_font("Helvetica", "B", 15)
+    # En-tête principal
+    pdf.set_font("Helvetica", "B", 16)
     pdf.set_text_color(0, 51, 102)
     pdf.cell(
         0,
-        10,
+        9,
         clean_for_pdf(f"Bilan de Performance Value Bets - {period_label}"),
         ln=True,
         align="C",
     )
+
     pdf.set_font("Helvetica", "B", 13)
-    pdf.set_text_color(40, 40, 40)
-    pdf.cell(0, 8, clean_for_pdf(title), ln=True, align="C")
-    pdf.set_font("Helvetica", "", 9)
-    pdf.set_text_color(100, 100, 100)
+    pdf.set_text_color(60, 60, 60)
+    pdf.cell(0, 7, clean_for_pdf(title), ln=True, align="C")
+
+    pdf.set_font("Helvetica", "I", 9)
+    pdf.set_text_color(120, 120, 120)
     pdf.cell(
         0,
         5,
@@ -595,7 +605,7 @@ def generate_pdf_report(df_filtered, period_label):
         ln=True,
         align="C",
     )
-    pdf.ln(4)
+    pdf.ln(5)
 
     # Calcul des métriques et tops
     fin = get_financial_summary(df_sub)
@@ -603,67 +613,83 @@ def generate_pdf_report(df_filtered, period_label):
     top_l = compute_top_league(df_sub)
     top_t = compute_top_timing(df_sub)
 
-    # 1. BLOC EN HAUT : Gauche (Résumé) + Droite (Graphique)
-    y_start = pdf.get_y()
+    # 1. BLOC RÉSUMÉ & STATISTIQUES (MISE EN VALEUR DYNAMIQUE)
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.set_text_color(0, 51, 102)
+    pdf.cell(0, 6, clean_for_pdf("Résumé & Statistiques :"), ln=True)
+    pdf.ln(2)
 
-    # Colonne Gauche : Métriques, Top Ligue, Top Timing
-    pdf.set_font("Helvetica", "B", 10)
-    pdf.set_text_color(0, 0, 0)
-    pdf.cell(95, 6, clean_for_pdf("Résumé & Statistiques :"), ln=True)
-    pdf.set_font("Helvetica", "", 9)
+    def write_key_val(label, val_str, val_bold=True, is_pnl=False, pnl_val=0):
+      pdf.set_font("Helvetica", "", 10)
+      pdf.set_text_color(50, 50, 50)
+      pdf.write(5, clean_for_pdf(f"• {label} : "))
 
-    pdf.cell(
-        95, 5, clean_for_pdf(f"• Volume Total : {fin['vbs']} Value Bets"), ln=True
+      pdf.set_font("Helvetica", "B" if val_bold else "", 10)
+      if is_pnl:
+        if pnl_val > 0:
+          pdf.set_text_color(0, 150, 0)
+        elif pnl_val < 0:
+          pdf.set_text_color(200, 0, 0)
+        else:
+          pdf.set_text_color(50, 50, 50)
+      else:
+        pdf.set_text_color(0, 0, 0)
+
+      pdf.write(5, clean_for_pdf(val_str))
+      pdf.ln(5.5)
+
+    write_key_val("Volume Total", f"{fin['vbs']} Value Bets")
+    write_key_val("Total Mises", f"{fin['mises']:,.2f} EUR")
+    write_key_val(
+        "P&L Net Réel",
+        f"{fin['pnl']:+,.2f} EUR",
+        is_pnl=True,
+        pnl_val=fin["pnl"],
     )
-    pdf.cell(
-        95, 5, clean_for_pdf(f"• Total Mises : {fin['mises']:,.2f} EUR"), ln=True
+    write_key_val(
+        "ROI Réel", f"{fin['roi']:+.2f} %", is_pnl=True, pnl_val=fin["roi"]
     )
-    pdf.cell(
-        95,
-        5,
-        clean_for_pdf(f"• P&L Net Réel : {fin['pnl']:+,.2f} EUR"),
-        ln=True,
-    )
-    pdf.cell(95, 5, clean_for_pdf(f"• ROI Réel : {fin['roi']:+.2f} %"), ln=True)
-    pdf.cell(
-        95, 5, clean_for_pdf(f"• Cote Moyenne : {perf['avg_odds']:.2f}"), ln=True
-    )
-    pdf.cell(
-        95,
-        5,
-        clean_for_pdf(
-            f"• Edge Moyen : +{perf['avg_edge']:.1f}% ±"
-            f" {perf['std_edge']:.1f}%"
-        ),
-        ln=True,
+    write_key_val("Cote Moyenne", f"{perf['avg_odds']:.2f}")
+    write_key_val(
+        "Edge Moyen", f"+{perf['avg_edge']:.1f}% ± {perf['std_edge']:.1f}%"
     )
     pdf.ln(2)
 
-    pdf.set_font("Helvetica", "B", 9)
-    pdf.cell(95, 5, clean_for_pdf("Top Ligue :"), ln=True)
-    pdf.set_font("Helvetica", "", 8)
-    pdf.multi_cell(90, 4, clean_for_pdf(top_l))
-    pdf.ln(1)
-
-    pdf.set_font("Helvetica", "B", 9)
-    pdf.cell(95, 5, clean_for_pdf("Top Timing :"), ln=True)
-    pdf.set_font("Helvetica", "", 8)
-    pdf.multi_cell(90, 4, clean_for_pdf(top_t))
-
-    y_left_end = pdf.get_y()
-
-    # Colonne Droite : Graphique de P&L Réel vs Théorique
-    chart_buf = generate_pnl_chart_bytes(df_sub)
-    if chart_buf:
-      pdf.image(chart_buf, x=105, y=y_start, w=95)
-
-    # Réalignement sous le bloc haut
-    pdf.set_y(max(y_left_end, y_start + 55))
-    pdf.ln(4)
-
-    # 2. BLOC EN BAS : Tableau exhaustif de TOUTES les ligues (classé par volume)
+    # Mettre en gras Top Ligue et Top Timing
     pdf.set_font("Helvetica", "B", 10)
     pdf.set_text_color(0, 0, 0)
+    pdf.cell(30, 5, clean_for_pdf("Top Ligue : "))
+    pdf.set_font("Helvetica", "B", 9.5)
+    pdf.set_text_color(0, 102, 204)
+    pdf.multi_cell(0, 5, clean_for_pdf(top_l))
+
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_text_color(0, 0, 0)
+    pdf.cell(30, 5, clean_for_pdf("Top Timing : "))
+    pdf.set_font("Helvetica", "B", 9.5)
+    pdf.set_text_color(128, 0, 128)
+    pdf.multi_cell(0, 5, clean_for_pdf(top_t))
+    pdf.ln(4)
+
+    # 2. GRAPHIQUE (INTEGRATION PLEINE LARGEUR)
+    chart_buf = generate_pnl_chart_bytes(df_sub)
+    if chart_buf:
+      pdf.image(chart_buf, x=15, y=pdf.get_y(), w=180)
+      pdf.ln(68)  # Espace réservé à l'image
+    else:
+      pdf.set_font("Helvetica", "I", 9)
+      pdf.set_text_color(150, 150, 150)
+      pdf.cell(
+          0,
+          6,
+          clean_for_pdf("Données insuffisantes pour générer la courbe de P&L."),
+          ln=True,
+      )
+      pdf.ln(3)
+
+    # 3. TABLEAU DES LIGUES (DESIGN RESTRUCTURÉ)
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_text_color(0, 51, 102)
     pdf.cell(
         0,
         6,
@@ -710,25 +736,88 @@ def generate_pdf_report(df_filtered, period_label):
             by="nb_bets", ascending=False
         )
 
-        # En-tête Tableau
-        pdf.set_font("Helvetica", "B", 8)
-        pdf.set_fill_color(230, 230, 230)
+        # En-tête du tableau
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_fill_color(0, 51, 102)
+        pdf.set_text_color(255, 255, 255)
         pdf.cell(65, 6, clean_for_pdf("Ligue"), border=1, fill=True)
         pdf.cell(25, 6, clean_for_pdf("Volume"), border=1, align="C", fill=True)
-        pdf.cell(35, 6, clean_for_pdf("Mises (EUR)"), border=1, align="R", fill=True)
-        pdf.cell(35, 6, clean_for_pdf("P&L (EUR)"), border=1, align="R", fill=True)
-        pdf.cell(30, 6, clean_for_pdf("ROI (%)"), border=1, align="R", fill=True)
+        pdf.cell(
+            35, 6, clean_for_pdf("Mises (EUR)"), border=1, align="R", fill=True
+        )
+        pdf.cell(
+            35, 6, clean_for_pdf("P&L (EUR)"), border=1, align="R", fill=True
+        )
+        pdf.cell(
+            30, 6, clean_for_pdf("ROI (%)"), border=1, align="R", fill=True
+        )
         pdf.ln()
 
-        # Lignes Tableau
-        pdf.set_font("Helvetica", "", 8)
+        # Corps du tableau avec lignes alternées
+        pdf.set_font("Helvetica", "", 8.5)
+        fill_toggle = False
+
         for _, row in league_summary.iterrows():
-          pdf.cell(65, 5, clean_for_pdf(str(row["league_clean"])[:35]), border=1)
-          pdf.cell(25, 5, clean_for_pdf(str(int(row["nb_bets"]))), border=1, align="C")
-          pdf.cell(35, 5, clean_for_pdf(f"{row['mises']:,.2f}"), border=1, align="R")
-          pdf.cell(35, 5, clean_for_pdf(f"{row['pnl']:+,.2f}"), border=1, align="R")
-          pdf.cell(30, 5, clean_for_pdf(f"{row['roi']:+.1f} %"), border=1, align="R")
+          if fill_toggle:
+            pdf.set_fill_color(245, 247, 250)
+          else:
+            pdf.set_fill_color(255, 255, 255)
+
+          pdf.set_text_color(0, 0, 0)
+          pdf.cell(
+              65,
+              5.5,
+              clean_for_pdf(str(row["league_clean"])[:35]),
+              border=1,
+              fill=True,
+          )
+
+          pdf.set_font("Helvetica", "B", 8.5)
+          pdf.cell(
+              25,
+              5.5,
+              clean_for_pdf(str(int(row["nb_bets"]))),
+              border=1,
+              align="C",
+              fill=True,
+          )
+
+          pdf.set_font("Helvetica", "", 8.5)
+          pdf.cell(
+              35,
+              5.5,
+              clean_for_pdf(f"{row['mises']:,.2f}"),
+              border=1,
+              align="R",
+              fill=True,
+          )
+
+          # Couleur P&L / ROI
+          if row["pnl"] > 0:
+            pdf.set_text_color(0, 130, 0)
+          elif row["pnl"] < 0:
+            pdf.set_text_color(180, 0, 0)
+          else:
+            pdf.set_text_color(0, 0, 0)
+
+          pdf.cell(
+              35,
+              5.5,
+              clean_for_pdf(f"{row['pnl']:+,.2f}"),
+              border=1,
+              align="R",
+              fill=True,
+          )
+          pdf.cell(
+              30,
+              5.5,
+              clean_for_pdf(f"{row['roi']:+.1f} %"),
+              border=1,
+              align="R",
+              fill=True,
+          )
           pdf.ln()
+          fill_toggle = not fill_toggle
 
   pdf_buffer = io.BytesIO()
   pdf.output(pdf_buffer)
@@ -1043,7 +1132,7 @@ timing_choice = st.sidebar.selectbox(
     index=0,
 )
 
-# 3. Tranche de cotes (Piste 1)
+# 3. Tranche de cotes
 odds_tranche = st.sidebar.selectbox(
     "3️⃣ Tranche de cotes :",
     ["Toutes les cotes", "1.50 - 1.75", "1.75 - 2.00", "2.00 - 2.30"],
@@ -1096,7 +1185,7 @@ available_leagues = (
     else ["Toutes les ligues"]
 )
 
-# 4. Ligue (Piste 4)
+# 4. Ligue
 league_choice = st.sidebar.selectbox(
     "4️⃣ Filtrer par Ligue :", options=available_leagues
 )
@@ -1125,11 +1214,10 @@ if st.sidebar.button("🔄 Purger le cache & Actualiser"):
   st.rerun()
 
 
-# CALCUL DES MÉTRIQUES DYNAMIQUES (PERFORMANCE & FINANCES)
+# CALCUL DES MÉTRIQUES DYNAMIQUES
 if not df_filtered.empty:
   total_vbs = len(df_filtered)
 
-  # Masques de marchés
   tirs_mask = df_filtered["type_marche"] == "Tirs & Cadrés"
   df_buts = df_filtered[~tirs_mask]
   df_tirs = df_filtered[tirs_mask]
@@ -1138,22 +1226,18 @@ if not df_filtered.empty:
   pct_tirs = tirs_count / total_vbs if total_vbs > 0 else 0.5
   pct_buts = 1.0 - pct_tirs
 
-  # Summaries Performance Découpés (Global, Buts, Tirs)
   perf_global = get_performance_summary(df_filtered)
   perf_buts = get_performance_summary(df_buts)
   perf_tirs = get_performance_summary(df_tirs)
 
-  # Bilans Financiers Découpés (Global, Buts, Tirs)
   fin_global = get_financial_summary(df_filtered)
   fin_buts = get_financial_summary(df_buts)
   fin_tirs = get_financial_summary(df_tirs)
 
-  # Top Ligues raccordées aux filtres actifs
   top_league_global = compute_top_league(df_filtered)
   top_league_buts = compute_top_league(df_buts)
   top_league_tirs = compute_top_league(df_tirs)
 
-  # Top Timing Bets raccordés aux filtres actifs
   top_timing_global = compute_top_timing(df_filtered)
   top_timing_buts = compute_top_timing(df_buts)
   top_timing_tirs = compute_top_timing(df_tirs)
@@ -1238,7 +1322,7 @@ with pt2:
       label="Cote Moy. (Tirs)", value=f"{perf_tirs['avg_odds']:.2f}"
   )
 
-# 2. Répartition des Marchés (Buts vs Tirs)
+# 2. Répartition des Marchés
 st.sidebar.markdown("---")
 st.sidebar.markdown("**🎯 Répartition Marchés**")
 st.sidebar.caption(f"{pct_buts:.0%} Buts  |  {pct_tirs:.0%} Tirs")
@@ -1365,7 +1449,7 @@ st.sidebar.divider()
 # 8. GRAPHIQUES & TABLEAU DE BORD PRINCIPAL
 # ==========================================
 
-# A. COURBE DE VARIANCE (P&L RÉEL VS P&L THÉORIQUE)
+# A. COURBE DE VARIANCE
 st.markdown("---")
 st.subheader("📈 P&L Réel vs P&L Théorique (Courbe de Variance)")
 
