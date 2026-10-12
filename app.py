@@ -517,7 +517,8 @@ def generate_pnl_chart_bytes(df_sub):
   df_pnl["pnl_real_cum"] = df_pnl["gains_num"].cumsum()
   df_pnl["pnl_theo_cum"] = df_pnl["pnl_theo_step"].cumsum()
 
-  fig, ax = plt.subplots(figsize=(8, 3.0), dpi=200)
+  # Format compact (hauteur réduite) pour éviter les superpositions dans le PDF
+  fig, ax = plt.subplots(figsize=(8, 2.2), dpi=200)
   fig.patch.set_facecolor("#ffffff")
   ax.set_facecolor("#f9f9f9")
 
@@ -525,28 +526,28 @@ def generate_pnl_chart_bytes(df_sub):
       df_pnl["date_jour"],
       df_pnl["pnl_real_cum"],
       color="#00CC96",
-      linewidth=2.2,
+      linewidth=2.0,
       label="P&L Réel (€)",
   )
   ax.plot(
       df_pnl["date_jour"],
       df_pnl["pnl_theo_cum"],
       color="#AB63FA",
-      linewidth=1.8,
+      linewidth=1.6,
       linestyle="--",
       label="P&L Théorique Attendu (€)",
   )
 
   ax.set_title(
       "Courbe de Variance (P&L Réel vs Théorique)",
-      fontsize=10,
+      fontsize=9.5,
       fontweight="bold",
-      pad=8,
+      pad=6,
   )
-  ax.set_ylabel("Euros (€)", fontsize=8, fontweight="bold")
-  ax.tick_params(axis="both", labelsize=7.5)
+  ax.set_ylabel("Euros (€)", fontsize=7.5, fontweight="bold")
+  ax.tick_params(axis="both", labelsize=7)
   ax.grid(True, linestyle=":", alpha=0.6)
-  ax.legend(fontsize=7.5, loc="upper left")
+  ax.legend(fontsize=7, loc="upper left")
 
   fig.autofmt_xdate(rotation=20)
   plt.tight_layout()
@@ -655,7 +656,7 @@ def generate_pdf_report(df_filtered, period_label):
     )
     pdf.ln(1)
 
-    # Top Ligue (Libellé ligne 1, Valeur ligne 2 en gras/couleur)
+    # Top Ligue
     pdf.set_font("Helvetica", "B", 9.5)
     pdf.set_text_color(0, 0, 0)
     pdf.cell(0, 4.5, clean_for_pdf("Top Ligue :"), ln=True)
@@ -664,7 +665,7 @@ def generate_pdf_report(df_filtered, period_label):
     pdf.multi_cell(0, 4.5, clean_for_pdf(top_l))
     pdf.ln(1)
 
-    # Top Timing (Libellé ligne 1, Valeur ligne 2 en gras/couleur)
+    # Top Timing
     pdf.set_font("Helvetica", "B", 9.5)
     pdf.set_text_color(0, 0, 0)
     pdf.cell(0, 4.5, clean_for_pdf("Top Timing :"), ln=True)
@@ -673,11 +674,13 @@ def generate_pdf_report(df_filtered, period_label):
     pdf.multi_cell(0, 4.5, clean_for_pdf(top_t))
     pdf.ln(3)
 
-    # 2. GRAPHIQUE (PLEINE LARGEUR)
+    # 2. GRAPHIQUE (PLEINE LARGEUR AVEC ESPACEMENT CORRIGÉ)
     chart_buf = generate_pnl_chart_bytes(df_sub)
     if chart_buf:
       pdf.image(chart_buf, x=15, y=pdf.get_y(), w=180)
-      pdf.ln(46)  # Espace réservé à l'image
+      pdf.ln(
+          54
+      )  # Espace réservé adapté à la hauteur compacte du nouveau graphique
     else:
       pdf.set_font("Helvetica", "I", 8.5)
       pdf.set_text_color(150, 150, 150)
