@@ -307,7 +307,7 @@ def compute_top_league(df_subset):
   )
 
   best = pos_stats.sort_values(by="score", ascending=False).iloc[0]
-  pnl_formatted = f"{best['pnl']:+,.2f} €".replace(",", " ")
+  pnl_formatted = f"{best['pnl']:+,.2f} EUR"
   nb_bets_val = int(best["nb_bets"])
   bets_label = "pari" if nb_bets_val == 1 else "paris"
   std_val = best["std_edge"]
@@ -389,7 +389,7 @@ def compute_top_timing(df_subset):
   )
 
   best = pos_stats.sort_values(by="score", ascending=False).iloc[0]
-  pnl_formatted = f"{best['pnl']:+,.2f} €".replace(",", " ")
+  pnl_formatted = f"{best['pnl']:+,.2f} EUR"
   nb_bets_val = int(best["nb_bets"])
   bets_label = "pari" if nb_bets_val == 1 else "paris"
   std_val = best["std_edge"]
@@ -526,7 +526,7 @@ def generate_pnl_chart_bytes(df_sub):
       df_pnl["pnl_real_cum"],
       color="#00CC96",
       linewidth=2.0,
-      label="P&L Réel (€)",
+      label="P&L Réel (EUR)",
   )
   ax.plot(
       df_pnl["date_jour"],
@@ -534,7 +534,7 @@ def generate_pnl_chart_bytes(df_sub):
       color="#AB63FA",
       linewidth=1.6,
       linestyle="--",
-      label="P&L Théorique Attendu (€)",
+      label="P&L Théorique Attendu (EUR)",
   )
 
   ax.set_title(
@@ -543,7 +543,7 @@ def generate_pnl_chart_bytes(df_sub):
       fontweight="bold",
       pad=6,
   )
-  ax.set_ylabel("Euros (€)", fontsize=7.5, fontweight="bold")
+  ax.set_ylabel("EUR", fontsize=7.5, fontweight="bold")
   ax.tick_params(axis="both", labelsize=7)
   ax.grid(True, linestyle=":", alpha=0.6)
   ax.legend(fontsize=7, loc="upper left")
@@ -707,7 +707,7 @@ def generate_pdf_report(
       )
       pdf.ln(2)
 
-    # 3. TABLEAU DES LIGUES
+    # 3. TABLEAU DES LIGUES (AVEC P&L THÉORIQUE À GAUCHE DU P&L RÉEL)
     pdf.set_font("Helvetica", "B", 10.5)
     pdf.set_text_color(0, 51, 102)
     pdf.cell(
@@ -726,6 +726,9 @@ def generate_pdf_report(
       col_mises = (
           "mises_num" if "mises_num" in df_sub.columns else df_sub.columns[12]
       )
+      col_edge = (
+          "edge_pct" if "edge_pct" in df_sub.columns else df_sub.columns[10]
+      )
 
       df_valid = df_sub[
           ~df_sub[col_league]
@@ -736,12 +739,17 @@ def generate_pdf_report(
 
       if not df_valid.empty:
         df_valid["league_clean"] = df_valid[col_league].astype(str).str.strip()
+        # Calcul du P&L théorique par ligne : Mises * (Edge % / 100)
+        df_valid["pnl_theo_step"] = df_valid[col_mises] * (
+            df_valid[col_edge] / 100.0
+        )
 
         league_summary = (
             df_valid.groupby("league_clean")
             .agg(
                 mises=(col_mises, "sum"),
                 pnl=(col_gains, "sum"),
+                pnl_theo=("pnl_theo_step", "sum"),
                 nb_bets=("league_clean", "count"),
             )
             .reset_index()
@@ -756,20 +764,33 @@ def generate_pdf_report(
             by="nb_bets", ascending=False
         )
 
-        # En-tête du tableau
-        pdf.set_font("Helvetica", "B", 8.5)
+        # En-tête du tableau (P&L Théorique à gauche du P&L Réel)
+        pdf.set_font("Helvetica", "B", 8)
         pdf.set_fill_color(0, 51, 102)
         pdf.set_text_color(255, 255, 255)
-        pdf.cell(65, 5.5, clean_for_pdf("Ligue"), border=1, fill=True)
-        pdf.cell(25, 5.5, clean_for_pdf("Volume"), border=1, align="C", fill=True)
+        pdf.cell(50, 5.5, clean_for_pdf("Ligue"), border=1, fill=True)
+        pdf.cell(18, 5.5, clean_for_pdf("Volume"), border=1, align="C", fill=True)
         pdf.cell(
-            35, 5.5, clean_for_pdf("Mises (EUR)"), border=1, align="R", fill=True
+            27, 5.5, clean_for_pdf("Mises (EUR)"), border=1, align="R", fill=True
         )
         pdf.cell(
-            35, 5.5, clean_for_pdf("P&L (EUR)"), border=1, align="R", fill=True
+            30,
+            5.5,
+            clean_for_pdf("P&L Théo. (EUR)"),
+            border=1,
+            align="R",
+            fill=True,
         )
         pdf.cell(
-            30, 5.5, clean_for_pdf("ROI (%)"), border=1, align="R", fill=True
+            30,
+            5.5,
+            clean_for_pdf("P&L Réel (EUR)"),
+            border=1,
+            align="R",
+            fill=True,
+        )
+        pdf.cell(
+            25, 5.5, clean_for_pdf("ROI (%)"), border=1, align="R", fill=True
         )
         pdf.ln()
 
@@ -785,16 +806,16 @@ def generate_pdf_report(
 
           pdf.set_text_color(0, 0, 0)
           pdf.cell(
-              65,
+              50,
               5,
-              clean_for_pdf(str(row["league_clean"])[:35]),
+              clean_for_pdf(str(row["league_clean"])[:28]),
               border=1,
               fill=True,
           )
 
           pdf.set_font("Helvetica", "B", 8)
           pdf.cell(
-              25,
+              18,
               5,
               clean_for_pdf(str(int(row["nb_bets"]))),
               border=1,
@@ -804,7 +825,7 @@ def generate_pdf_report(
 
           pdf.set_font("Helvetica", "", 8)
           pdf.cell(
-              35,
+              27,
               5,
               clean_for_pdf(f"{row['mises']:,.2f}"),
               border=1,
@@ -812,7 +833,17 @@ def generate_pdf_report(
               fill=True,
           )
 
-          # Couleur P&L / ROI
+          # P&L Théorique
+          pdf.cell(
+              30,
+              5,
+              clean_for_pdf(f"{row['pnl_theo']:+,.2f}"),
+              border=1,
+              align="R",
+              fill=True,
+          )
+
+          # Couleur P&L Réel / ROI
           if row["pnl"] > 0:
             pdf.set_text_color(0, 130, 0)
           elif row["pnl"] < 0:
@@ -821,7 +852,7 @@ def generate_pdf_report(
             pdf.set_text_color(0, 0, 0)
 
           pdf.cell(
-              35,
+              30,
               5,
               clean_for_pdf(f"{row['pnl']:+,.2f}"),
               border=1,
@@ -829,9 +860,9 @@ def generate_pdf_report(
               fill=True,
           )
           pdf.cell(
-              30,
+              25,
               5,
-              clean_for_pdf(f"{row['roi']:+.1f} %"),
+              clean_for_pdf(f"{row['roi']:+.1f}%"),
               border=1,
               align="R",
               fill=True,
@@ -937,7 +968,7 @@ class DixonColesModel:
     )
 
     if not result.success:
-      st.warning("Attention : Le modèle a eu du mal à converger.")
+      st.warning("Attention : Le modèle a du mal à converger.")
 
     attack, defense, rho, home_adv = unpack(result.x)
     self.params = {
@@ -1366,12 +1397,12 @@ fg1, fg2 = st.sidebar.columns(2)
 with fg1:
   st.sidebar.metric(
       label="Mises Totales",
-      value=f"{fin_global['mises']:,.2f} €".replace(",", " "),
+      value=f"{fin_global['mises']:,.2f} EUR".replace(",", " "),
   )
   st.sidebar.metric(label="ROI Réel", value=f"{fin_global['roi']:+.1f}%")
 with fg2:
   st.sidebar.metric(
-      label="P&L Net", value=f"{fin_global['pnl']:+,.2f} €".replace(",", " ")
+      label="P&L Net", value=f"{fin_global['pnl']:+,.2f} EUR".replace(",", " ")
   )
 
 # B. Marchés Buts
@@ -1384,12 +1415,12 @@ fb1, fb2 = st.sidebar.columns(2)
 with fb1:
   st.sidebar.metric(
       label="Mises (Buts)",
-      value=f"{fin_buts['mises']:,.2f} €".replace(",", " "),
+      value=f"{fin_buts['mises']:,.2f} EUR".replace(",", " "),
   )
   st.sidebar.metric(label="ROI (Buts)", value=f"{fin_buts['roi']:+.1f}%")
 with fb2:
   st.sidebar.metric(
-      label="P&L (Buts)", value=f"{fin_buts['pnl']:+,.2f} €".replace(",", " ")
+      label="P&L (Buts)", value=f"{fin_buts['pnl']:+,.2f} EUR".replace(",", " ")
   )
 
 # C. Marchés Tirs
@@ -1402,12 +1433,12 @@ ft1, ft2 = st.sidebar.columns(2)
 with ft1:
   st.sidebar.metric(
       label="Mises (Tirs)",
-      value=f"{fin_tirs['mises']:,.2f} €".replace(",", " "),
+      value=f"{fin_tirs['mises']:,.2f} EUR".replace(",", " "),
   )
   st.sidebar.metric(label="ROI (Tirs)", value=f"{fin_tirs['roi']:+.1f}%")
 with ft2:
   st.sidebar.metric(
-      label="P&L (Tirs)", value=f"{fin_tirs['pnl']:+,.2f} €".replace(",", " ")
+      label="P&L (Tirs)", value=f"{fin_tirs['pnl']:+,.2f} EUR".replace(",", " ")
   )
 
 # 4. TOP LIGUES
@@ -1512,7 +1543,7 @@ if not df_filtered.empty:
             x=df_pnl["date_jour"],
             y=df_pnl["pnl_real_cum"],
             mode="lines+markers",
-            name="P&L Réel (€)",
+            name="P&L Réel (EUR)",
             line=dict(color="#00CC96", width=2.5),
             marker=dict(size=6),
         )
@@ -1523,7 +1554,7 @@ if not df_filtered.empty:
             x=df_pnl["date_jour"],
             y=df_pnl["pnl_theo_cum"],
             mode="lines+markers",
-            name="P&L Théorique Attendu (€)",
+            name="P&L Théorique Attendu (EUR)",
             line=dict(color="#AB63FA", width=2, dash="dash"),
             marker=dict(size=6),
         )
@@ -1532,7 +1563,7 @@ if not df_filtered.empty:
     fig_pnl.update_layout(
         template="plotly_dark",
         xaxis_title="Date",
-        yaxis_title="Euros (€)",
+        yaxis_title="EUR",
         hovermode="x unified",
         legend=dict(
             orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
@@ -1567,7 +1598,7 @@ if not df_filtered.empty:
         text_auto=".2f",
         aspect="auto",
         color_continuous_scale="RdYlGn",
-        title="Gain Net (€) par Ligue et Marché",
+        title="Gain Net (EUR) par Ligue et Marché",
     )
     fig_heatmap.update_layout(
         template="plotly_dark", xaxis_title="Marché", yaxis_title="Ligue"
