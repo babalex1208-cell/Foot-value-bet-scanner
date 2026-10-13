@@ -707,7 +707,7 @@ def generate_pdf_report(
       )
       pdf.ln(2)
 
-    # 3. TABLEAU DES LIGUES (AVEC P&L THÉORIQUE À GAUCHE DU P&L RÉEL)
+    # 3. TABLEAU DES LIGUES (AVEC P&L THÉORIQUE ET COLONNE D'ÉCART EUR / %)
     pdf.set_font("Helvetica", "B", 10.5)
     pdf.set_text_color(0, 51, 102)
     pdf.cell(
@@ -739,7 +739,6 @@ def generate_pdf_report(
 
       if not df_valid.empty:
         df_valid["league_clean"] = df_valid[col_league].astype(str).str.strip()
-        # Calcul du P&L théorique par ligne : Mises * (Edge % / 100)
         df_valid["pnl_theo_step"] = df_valid[col_mises] * (
             df_valid[col_edge] / 100.0
         )
@@ -764,17 +763,17 @@ def generate_pdf_report(
             by="nb_bets", ascending=False
         )
 
-        # En-tête du tableau (P&L Théorique à gauche du P&L Réel)
-        pdf.set_font("Helvetica", "B", 8)
+        # En-tête du tableau (largeurs ajustées pour totaliser 180mm)
+        pdf.set_font("Helvetica", "B", 7.5)
         pdf.set_fill_color(0, 51, 102)
         pdf.set_text_color(255, 255, 255)
-        pdf.cell(50, 5.5, clean_for_pdf("Ligue"), border=1, fill=True)
-        pdf.cell(18, 5.5, clean_for_pdf("Volume"), border=1, align="C", fill=True)
+        pdf.cell(42, 5.5, clean_for_pdf("Ligue"), border=1, fill=True)
+        pdf.cell(15, 5.5, clean_for_pdf("Volume"), border=1, align="C", fill=True)
         pdf.cell(
-            27, 5.5, clean_for_pdf("Mises (EUR)"), border=1, align="R", fill=True
+            22, 5.5, clean_for_pdf("Mises (EUR)"), border=1, align="R", fill=True
         )
         pdf.cell(
-            30,
+            25,
             5.5,
             clean_for_pdf("P&L Théo. (EUR)"),
             border=1,
@@ -782,7 +781,7 @@ def generate_pdf_report(
             fill=True,
         )
         pdf.cell(
-            30,
+            25,
             5.5,
             clean_for_pdf("P&L Réel (EUR)"),
             border=1,
@@ -790,12 +789,20 @@ def generate_pdf_report(
             fill=True,
         )
         pdf.cell(
-            25, 5.5, clean_for_pdf("ROI (%)"), border=1, align="R", fill=True
+            36,
+            5.5,
+            clean_for_pdf("Écart (EUR / %)"),
+            border=1,
+            align="R",
+            fill=True,
+        )
+        pdf.cell(
+            15, 5.5, clean_for_pdf("ROI (%)"), border=1, align="R", fill=True
         )
         pdf.ln()
 
         # Corps du tableau avec lignes alternées
-        pdf.set_font("Helvetica", "", 8)
+        pdf.set_font("Helvetica", "", 7.5)
         fill_toggle = False
 
         for _, row in league_summary.iterrows():
@@ -806,16 +813,16 @@ def generate_pdf_report(
 
           pdf.set_text_color(0, 0, 0)
           pdf.cell(
-              50,
+              42,
               5,
-              clean_for_pdf(str(row["league_clean"])[:28]),
+              clean_for_pdf(str(row["league_clean"])[:24]),
               border=1,
               fill=True,
           )
 
-          pdf.set_font("Helvetica", "B", 8)
+          pdf.set_font("Helvetica", "B", 7.5)
           pdf.cell(
-              18,
+              15,
               5,
               clean_for_pdf(str(int(row["nb_bets"]))),
               border=1,
@@ -823,9 +830,9 @@ def generate_pdf_report(
               fill=True,
           )
 
-          pdf.set_font("Helvetica", "", 8)
+          pdf.set_font("Helvetica", "", 7.5)
           pdf.cell(
-              27,
+              22,
               5,
               clean_for_pdf(f"{row['mises']:,.2f}"),
               border=1,
@@ -835,7 +842,7 @@ def generate_pdf_report(
 
           # P&L Théorique
           pdf.cell(
-              30,
+              25,
               5,
               clean_for_pdf(f"{row['pnl_theo']:+,.2f}"),
               border=1,
@@ -843,7 +850,7 @@ def generate_pdf_report(
               fill=True,
           )
 
-          # Couleur P&L Réel / ROI
+          # P&L Réel
           if row["pnl"] > 0:
             pdf.set_text_color(0, 130, 0)
           elif row["pnl"] < 0:
@@ -852,15 +859,50 @@ def generate_pdf_report(
             pdf.set_text_color(0, 0, 0)
 
           pdf.cell(
-              30,
+              25,
               5,
               clean_for_pdf(f"{row['pnl']:+,.2f}"),
               border=1,
               align="R",
               fill=True,
           )
+
+          # Calcul de l'écart (Réel - Théorique) en EUR et en % sur la base du Théorique
+          diff_eur = row["pnl"] - row["pnl_theo"]
+          diff_pct = (
+              (diff_eur / abs(row["pnl_theo"]) * 100.0)
+              if row["pnl_theo"] != 0
+              else 0.0
+          )
+          diff_str = f"{diff_eur:+,.2f} / {diff_pct:+.1f}%"
+
+          # Coloration de la cellule d'écart selon son signe
+          if diff_eur > 0:
+            pdf.set_text_color(0, 130, 0)
+          elif diff_eur < 0:
+            pdf.set_text_color(180, 0, 0)
+          else:
+            pdf.set_text_color(0, 0, 0)
+
           pdf.cell(
-              25,
+              36,
+              5,
+              clean_for_pdf(diff_str),
+              border=1,
+              align="R",
+              fill=True,
+          )
+
+          # ROI (%)
+          if row["roi"] > 0:
+            pdf.set_text_color(0, 130, 0)
+          elif row["roi"] < 0:
+            pdf.set_text_color(180, 0, 0)
+          else:
+            pdf.set_text_color(0, 0, 0)
+
+          pdf.cell(
+              15,
               5,
               clean_for_pdf(f"{row['roi']:+.1f}%"),
               border=1,
