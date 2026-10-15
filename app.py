@@ -400,6 +400,38 @@ def compute_top_timing(df_subset):
   )
 
 
+def compute_top_odds_tranche(df_subset, min_c, max_c):
+  """Calcule le bilan d'une tranche de cotes spécifique sur le DataFrame filtré."""
+  if df_subset is None or df_subset.empty:
+    return "Aucun pari"
+
+  col_odds = (
+      "odds_num" if "odds_num" in df_subset.columns else df_subset.columns[7]
+  )
+  col_gains = (
+      "gains_num" if "gains_num" in df_subset.columns else df_subset.columns[14]
+  )
+  col_mises = (
+      "mises_num" if "mises_num" in df_subset.columns else df_subset.columns[12]
+  )
+
+  df_tranche = df_subset[
+      (df_subset[col_odds] >= min_c) & (df_subset[col_odds] < max_c)
+  ].copy()
+
+  if df_tranche.empty:
+    return "Aucun pari"
+
+  total_pnl = df_tranche[col_gains].sum()
+  total_mises = df_tranche[col_mises].sum()
+  roi = (total_pnl / total_mises * 100.0) if total_mises > 0 else 0.0
+  nb_bets = len(df_tranche)
+  bets_label = "pari" if nb_bets == 1 else "paris"
+
+  pnl_formatted = f"{total_pnl:+,.2f} EUR"
+  return f"{pnl_formatted} | {roi:+.1f}% | {nb_bets} {bets_label}"
+
+
 def prepare_dataframe(df_raw):
   """Prépare et nettoie le DataFrame brut de Google Sheets pour tous les modules."""
   if df_raw is None or df_raw.empty:
@@ -1334,6 +1366,19 @@ if not df_filtered.empty:
   top_timing_global = compute_top_timing(df_filtered)
   top_timing_buts = compute_top_timing(df_buts)
   top_timing_tirs = compute_top_timing(df_tirs)
+
+  # Calculs pour Top Tranches de cotes (Global, Buts, Tirs)
+  tranche_15_175_g = compute_top_odds_tranche(df_filtered, 1.50, 1.75)
+  tranche_175_2_g = compute_top_odds_tranche(df_filtered, 1.75, 2.00)
+  tranche_2_23_g = compute_top_odds_tranche(df_filtered, 2.00, 2.30)
+
+  tranche_15_175_b = compute_top_odds_tranche(df_buts, 1.50, 1.75)
+  tranche_175_2_b = compute_top_odds_tranche(df_buts, 1.75, 2.00)
+  tranche_2_23_b = compute_top_odds_tranche(df_buts, 2.00, 2.30)
+
+  tranche_15_175_t = compute_top_odds_tranche(df_tirs, 1.50, 1.75)
+  tranche_175_2_t = compute_top_odds_tranche(df_tirs, 1.75, 2.00)
+  tranche_2_23_t = compute_top_odds_tranche(df_tirs, 2.00, 2.30)
 else:
   total_vbs = 0
   pct_buts, pct_tirs = 0.5, 0.5
@@ -1349,6 +1394,9 @@ else:
   top_timing_global = "Aucun pari"
   top_timing_buts = "Aucun pari"
   top_timing_tirs = "Aucun pari"
+  tranche_15_175_g = tranche_175_2_g = tranche_2_23_g = "Aucun pari"
+  tranche_15_175_b = tranche_175_2_b = tranche_2_23_b = "Aucun pari"
+  tranche_15_175_t = tranche_175_2_t = tranche_2_23_t = "Aucun pari"
 
 
 # 1. PERFORMANCE TRI-MARCHÉ
@@ -1530,6 +1578,35 @@ st.sidebar.markdown(
     <div style="font-size: 0.85rem; line-height: 1.45; background-color: #1e2129; padding: 9px 11px; border-radius: 6px; margin-bottom: 8px; border-left: 3.5px solid #AB63FA;">
         <span style="font-weight: bold; color: #a0aab8; font-size: 0.75rem; text-transform: uppercase;">📊 Marchés Tirs</span><br>
         <span style="color: #ffffff; font-weight: 500; font-size: 0.83rem;">{top_timing_tirs}</span>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+# 6. TOP TRANCHES DE COTES
+st.sidebar.markdown("---")
+st.sidebar.markdown(
+    "<span style='font-size: 1.2rem; font-weight: bold;'>📈 Top Tranches de"
+    " Cotes</span>",
+    unsafe_allow_html=True,
+)
+
+st.sidebar.markdown(
+    f"""
+    <div style="font-size: 0.85rem; line-height: 1.45; background-color: #1e2129; padding: 9px 11px; border-radius: 6px; margin-top: 10px; margin-bottom: 8px; border-left: 3.5px solid #FFA15A;">
+        <span style="font-weight: bold; color: #a0aab8; font-size: 0.75rem; text-transform: uppercase;">🌐 Global (1.5 - 1.75)</span><br><span style="color: #ffffff; font-weight: 500; font-size: 0.83rem;">{tranche_15_175_g}</span><br>
+        <span style="font-weight: bold; color: #a0aab8; font-size: 0.75rem; text-transform: uppercase;">🌐 Global (1.75 - 2)</span><br><span style="color: #ffffff; font-weight: 500; font-size: 0.83rem;">{tranche_175_2_g}</span><br>
+        <span style="font-weight: bold; color: #a0aab8; font-size: 0.75rem; text-transform: uppercase;">🌐 Global (2 - 2.3)</span><br><span style="color: #ffffff; font-weight: 500; font-size: 0.83rem;">{tranche_2_23_g}</span>
+    </div>
+    <div style="font-size: 0.85rem; line-height: 1.45; background-color: #1e2129; padding: 9px 11px; border-radius: 6px; margin-bottom: 8px; border-left: 3.5px solid #FFA15A;">
+        <span style="font-weight: bold; color: #a0aab8; font-size: 0.75rem; text-transform: uppercase;">⚽ Buts (1.5 - 1.75)</span><br><span style="color: #ffffff; font-weight: 500; font-size: 0.83rem;">{tranche_15_175_b}</span><br>
+        <span style="font-weight: bold; color: #a0aab8; font-size: 0.75rem; text-transform: uppercase;">⚽ Buts (1.75 - 2)</span><br><span style="color: #ffffff; font-weight: 500; font-size: 0.83rem;">{tranche_175_2_b}</span><br>
+        <span style="font-weight: bold; color: #a0aab8; font-size: 0.75rem; text-transform: uppercase;">⚽ Buts (2 - 2.3)</span><br><span style="color: #ffffff; font-weight: 500; font-size: 0.83rem;">{tranche_2_23_b}</span>
+    </div>
+    <div style="font-size: 0.85rem; line-height: 1.45; background-color: #1e2129; padding: 9px 11px; border-radius: 6px; margin-bottom: 8px; border-left: 3.5px solid #FFA15A;">
+        <span style="font-weight: bold; color: #a0aab8; font-size: 0.75rem; text-transform: uppercase;">📊 Tirs (1.5 - 1.75)</span><br><span style="color: #ffffff; font-weight: 500; font-size: 0.83rem;">{tranche_15_175_t}</span><br>
+        <span style="font-weight: bold; color: #a0aab8; font-size: 0.75rem; text-transform: uppercase;">📊 Tirs (1.75 - 2)</span><br><span style="color: #ffffff; font-weight: 500; font-size: 0.83rem;">{tranche_175_2_t}</span><br>
+        <span style="font-weight: bold; color: #a0aab8; font-size: 0.75rem; text-transform: uppercase;">📊 Tirs (2 - 2.3)</span><br><span style="color: #ffffff; font-weight: 500; font-size: 0.83rem;">{tranche_2_23_t}</span>
     </div>
     """,
     unsafe_allow_html=True,
