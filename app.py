@@ -52,21 +52,26 @@ VIG_TIRS = 0.125      # 12.5% pour tirs et tirs cadrés
 
 def get_clean_odds_and_edge(model_prob, bookmaker_odds, market):
     """
-    Calcule la cote fair sans marge du bookmaker et le vrai edge net.
-    - Marchés principaux (1N2, buts, etc.) : Vig = 6%
-    - Marchés Tirs / SOT : Vig = 12.5%
+    Calcule la cote fair ajustée et l'Edge Net réel (déduit de la marge du bookmaker).
+    - Marchés principaux (1N2, buts) : Vig = 6% (0.06)
+    - Marchés Tirs / SOT : Vig = 12.5% (0.125)
     """
     if bookmaker_odds is None or bookmaker_odds <= 1.0 or model_prob <= 0:
         return bookmaker_odds, 0.0, 0.0
 
+    # Identification du vig selon le marché
     vig = VIG_TIRS if any(k in str(market).lower() for k in ["tirs", "sot", "shot"]) else VIG_PRINCIPAL
 
-    raw_implied_prob = 1.0 / bookmaker_odds
-    clean_implied_prob = raw_implied_prob * (1.0 - vig)
-    fair_odds = 1.0 / clean_implied_prob if clean_implied_prob > 0 else bookmaker_odds
-    edge = (model_prob * fair_odds) - 1.0
+    # 1. Cote Fair réelle (cote nette sans commission du bookmaker)
+    fair_odds = bookmaker_odds * (1.0 + vig)
 
-    return fair_odds, edge, clean_implied_prob
+    # 2. Vrai Edge Net déduit de la marge du bookmaker
+    edge_net = (model_prob * bookmaker_odds * (1.0 - vig)) - 1.0
+
+    # 3. Probabilité implicite nettoyée
+    clean_implied_prob = 1.0 / fair_odds
+
+    return fair_odds, edge_net, clean_implied_prob
 
 
 # =========================================================
