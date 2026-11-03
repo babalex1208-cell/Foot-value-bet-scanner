@@ -1985,7 +1985,7 @@ with st.form("form_saisie_cotes"):
             "Seuil d'Edge minimum (%)",
             min_value=0.0,
             max_value=15.0,
-            value=5.0,
+            value=3.0,
             step=0.5,
         )
         / 100
@@ -2232,10 +2232,11 @@ if submit_analysis:
                     fair_odds, edge, _ = get_clean_odds_and_edge(prob, odd, market)
 
                     if edge > min_edge:
-                        b = fair_odds - 1.0
-                        kelly_quart = (
-                            max(0.0, (b * prob - (1 - prob)) / b) * 0.25 if b > 0 else 0.0
-                        )
+                        b = odd - 1.0  
+                        q = 1.0 - prob
+                        kelly_full = max(0.0, (b * prob - q) / b) if b > 0 else 0.0
+                        kelly_quart = kelly_full / 4.0
+
                         results.append(
                             ValueBetResult(market, sel, prob, odd, fair_odds, edge, kelly_quart)
                         )
