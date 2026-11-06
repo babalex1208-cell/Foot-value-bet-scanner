@@ -145,7 +145,7 @@ def build_sheets_row(
         league_name.split(" - ")[-1] if " - " in str(league_name) else league_name
     )
     edge_val = round(float(vb.edge), 4)
-    kelly_val = round(float(vb.kelly_quart), 4)
+    kelly_val = round(float(vb.kelly_huitieme), 4)
 
     return [
         str(match_date),
@@ -1132,7 +1132,7 @@ class ValueBetResult:
     bookmaker_odds: float
     fair_odds: float
     edge: float
-    kelly_quart: float
+    kelly_huitieme: float
 
 
 @st.cache_data(ttl=3600)
@@ -2235,10 +2235,10 @@ if submit_analysis:
                         b = odd - 1.0  
                         q = 1.0 - prob
                         kelly_full = max(0.0, (b * prob - q) / b) if b > 0 else 0.0
-                        kelly_quart = kelly_full / 4.0
+                        kelly_huitieme = kelly_full / 8.0
 
                         results.append(
-                            ValueBetResult(market, sel, prob, odd, fair_odds, edge, kelly_quart)
+                            ValueBetResult(market, sel, prob, odd, fair_odds, edge, kelly_huitieme)
                         )
 
         results.sort(key=lambda x: x.edge, reverse=True)
@@ -2380,7 +2380,7 @@ if "analysis_data" in st.session_state:
             )
             st.write(
                 f"• **EDGE NET : +{vb.edge:.1%}** | Mise Kelly (1/4) conseillée :"
-                f" **{vb.kelly_quart:.1%}**"
+                f" **{vb.kelly_huitieme:.1%}**"
             )
 
             if st.button(f"📤 Exporter ce pari (#{idx+1})", key=f"export_{idx}"):
