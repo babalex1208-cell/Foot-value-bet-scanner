@@ -2379,7 +2379,7 @@ if "analysis_data" in st.session_state:
                 f" **{vb.bookmaker_odds}** (Cote Fair nettoyée : **{vb.fair_odds:.2f}**)"
             )
             st.write(
-                f"• **EDGE NET : +{vb.edge:.1%}** | Mise Kelly (1/4) conseillée :"
+                f"• **EDGE NET : +{vb.edge:.1%}** | Mise Kelly conseillée :"
                 f" **{vb.kelly_huitieme:.1%}**"
             )
 
